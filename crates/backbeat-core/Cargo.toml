@@ -19,3 +19,5 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tracing = "0.1"
 bollard = "0.17"
 futures-util = "0.3"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"

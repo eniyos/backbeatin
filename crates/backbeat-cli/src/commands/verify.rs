@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use backbeat_core::{
     compute_manifest, verify_restore, BackendType, BorgBackend, BackupBackend, Config,
-    NewVerificationRun, RepoConfig, ResticBackend, RestoreOutcome, Sandbox, Store,
+    NewVerificationRun, RepoConfig, ResticBackend, RestoreOutcome, Sandbox, Signer, Store,
     VerificationStatus,
 };
 
@@ -137,14 +137,51 @@ async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
         bytes_restored: outcome.bytes_restored,
         message: result.message.clone(),
         manifest: Some(manifest),
+        signature_hex: None,
+        public_key_hex: None,
         started_at,
         completed_at,
     };
 
-    if let Err(e) = store.insert_verification_run(&run_record) {
-        tracing::warn!("Failed to persist verification run: {}", e);
-    } else {
-        tracing::info!("Run persisted to store ({})", status_str);
+    // Insert and sign the run record.
+    match store.insert_verification_run(&run_record) {
+        Ok(run_id) => {
+            tracing::info!("Run persisted to store ({})", status_str);
+
+            // Compute the manifest hash (SHA-256 of the JSON-serialized manifest).
+            let manifest_hash = run_record
+                .manifest
+                .as_ref()
+                .map(backbeat_core::sign::manifest_sha256)
+                .unwrap_or_default();
+
+            // Sign the run data (best-effort).
+            if let Ok(signer) = Signer::auto_load_or_generate() {
+                if let Ok(msg) = backbeat_core::sign::run_signing_message(
+                    run_id,
+                    &config.name,
+                    &snapshot_id,
+                    &status_str,
+                    outcome.files_count,
+                    outcome.bytes_restored,
+                    &result.message,
+                    &manifest_hash,
+                    started_at,
+                    completed_at,
+                ) {
+                    let sig = signer.sign(&msg);
+                    let pk_hex = signer.public_key_hex();
+                    if let Err(e) = store.update_run_signature(run_id, &sig, &pk_hex) {
+                        tracing::warn!("Failed to persist signature: {}", e);
+                    } else {
+                        tracing::info!("Run signed with Ed25519 key");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to persist verification run: {}", e);
+        }
     }
 
     // --- Step 6: report result ---

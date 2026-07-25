@@ -22,6 +22,10 @@ pub struct VerificationRunRecord {
     pub message: String,
     pub started_at: i64,
     pub completed_at: i64,
+    /// Hex-encoded Ed25519 signature of the run data, if signed.
+    pub signature_hex: Option<String>,
+    /// Hex-encoded Ed25519 public key that produced the signature, if signed.
+    pub public_key_hex: Option<String>,
 }
 
 /// Data needed to insert a new verification run.
@@ -38,6 +42,10 @@ pub struct NewVerificationRun {
     pub manifest: Option<Manifest>,
     pub started_at: i64,
     pub completed_at: i64,
+    /// Hex-encoded Ed25519 signature (optional, set after insertion).
+    pub signature_hex: Option<String>,
+    /// Hex-encoded public key corresponding to the signature.
+    pub public_key_hex: Option<String>,
 }
 
 /// Return the current Unix epoch timestamp (seconds).
@@ -100,6 +108,8 @@ impl Store {
                 bytes_restored  INTEGER NOT NULL,
                 manifest_json   TEXT,
                 message         TEXT,
+                signature_hex   TEXT,
+                public_key_hex  TEXT,
                 started_at      INTEGER NOT NULL,
                 completed_at    INTEGER NOT NULL
             );
@@ -113,6 +123,13 @@ impl Store {
                 sent_at         INTEGER NOT NULL DEFAULT (strftime('%s','now'))
             );",
         )?;
+
+        // Migration: add signing columns to existing databases.
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE verification_runs ADD COLUMN signature_hex TEXT;
+             ALTER TABLE verification_runs ADD COLUMN public_key_hex TEXT;",
+        );
+
         Ok(())
     }
 
@@ -207,8 +224,9 @@ impl Store {
         self.conn.execute(
             "INSERT INTO verification_runs
                 (repo_id, snapshot_id, status, files_count, bytes_restored,
-                 manifest_json, message, started_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 manifest_json, message, signature_hex, public_key_hex,
+                 started_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![
                 repo_id,
                 run.snapshot_id,
@@ -217,6 +235,8 @@ impl Store {
                 run.bytes_restored,
                 manifest_json,
                 run.message,
+                run.signature_hex,
+                run.public_key_hex,
                 run.started_at,
                 run.completed_at,
             ],
@@ -224,11 +244,28 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Update a verification run with its Ed25519 signature after insertion.
+    pub fn update_run_signature(
+        &self,
+        run_id: i64,
+        signature_hex: &str,
+        public_key_hex: &str,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE verification_runs
+             SET signature_hex = ?1, public_key_hex = ?2
+             WHERE id = ?3",
+            rusqlite::params![signature_hex, public_key_hex, run_id],
+        )?;
+        Ok(())
+    }
+
     /// Return the most recent verification runs for a given repo.
     pub fn recent_runs(&self, repo_name: &str, limit: i64) -> anyhow::Result<Vec<VerificationRunRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.id, r.repo_id, r.snapshot_id, r.status,
                     r.files_count, r.bytes_restored, r.message,
+                    r.signature_hex, r.public_key_hex,
                     r.started_at, r.completed_at, p.name
              FROM verification_runs r
              JOIN repos p ON p.id = r.repo_id
@@ -246,9 +283,11 @@ impl Store {
                 files_count: row.get::<_, i64>(4)? as u64,
                 bytes_restored: row.get::<_, i64>(5)? as u64,
                 message: row.get(6)?,
-                started_at: row.get(7)?,
-                completed_at: row.get(8)?,
-                repo_name: row.get(9)?,
+                signature_hex: row.get(7)?,
+                public_key_hex: row.get(8)?,
+                started_at: row.get(9)?,
+                completed_at: row.get(10)?,
+                repo_name: row.get(11)?,
             })
         })?;
 
@@ -317,6 +356,8 @@ mod tests {
             bytes_restored: 50000,
             message: "All good".into(),
             manifest: Some(manifest),
+            signature_hex: None,
+            public_key_hex: None,
             started_at: 1_705_318_800,
             completed_at: 1_705_318_860,
         };
