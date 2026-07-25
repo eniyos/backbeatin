@@ -96,9 +96,10 @@ impl Sandbox {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        // Build the restic command line inside the container.
+        // Build the restic command arguments for inside the container.
+        // The `restic/restic` image has ENTRYPOINT ["restic"], so we only
+        // pass arguments — not the binary name itself.
         let cmd = vec![
-            "restic".to_string(),
             "--repo".to_string(),
             config.uri.clone(),
             "restore".to_string(),
@@ -128,6 +129,8 @@ impl Sandbox {
     ///
     /// Creates the container, starts it, waits for completion, captures
     /// stdout/stderr, then removes the container (force=true).
+    /// The container is always removed when this function returns, even on
+    /// error.
     async fn run_command(
         &self,
         cmd: Vec<String>,
@@ -154,6 +157,38 @@ impl Sandbox {
         let id = &create_result.id;
         tracing::debug!("Created container {}", id);
 
+        // Run the container and capture its output.  On any error we still
+        // try to remove the container before propagating the error.
+        let inner_result = self.run_container_inner(id).await;
+
+        // Always attempt to remove the container (best-effort cleanup).
+        if let Err(remove_err) = self
+            .docker
+            .remove_container(
+                id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    link: false,
+                    v: false,
+                }),
+            )
+            .await
+        {
+            tracing::warn!("Failed to remove container {}: {}", id, remove_err);
+        } else {
+            tracing::debug!("Removed container {}", id);
+        }
+
+        // Propagate any error from the inner operation.
+        inner_result
+    }
+
+    /// Inner logic: start, wait, and capture logs for an already-created
+    /// container.  Does NOT attempt removal — the caller must clean up.
+    async fn run_container_inner(
+        &self,
+        id: &str,
+    ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         // Start it.
         self.docker
             .start_container::<String>(id, None::<StartContainerOptions<String>>)
@@ -176,7 +211,7 @@ impl Sandbox {
         let exit_code = wait_result.status_code;
         tracing::debug!("Container {} exited with code {}", id, exit_code);
 
-        // Capture logs.
+        // Capture logs (container is stopped at this point).
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
@@ -196,21 +231,6 @@ impl Sandbox {
                 _ => {}
             }
         }
-
-        // Remove container (force).
-        self.docker
-            .remove_container(
-                id,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    link: false,
-                    v: false,
-                }),
-            )
-            .await
-            .context("Failed to remove Docker container")?;
-
-        tracing::debug!("Removed container {}", id);
 
         // Check exit code.
         if exit_code != 0 {
