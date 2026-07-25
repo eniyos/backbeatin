@@ -1,0 +1,160 @@
+use std::collections::HashMap;
+use std::path::Path;
+
+use serde::Deserialize;
+
+/// The top-level configuration for Backbeatin.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    /// One or more repositories to periodically verify.
+    #[serde(rename = "repo")]
+    #[serde(default)]
+    pub repos: Vec<RepoConfig>,
+
+    /// Optional notification configuration.
+    pub notifications: Option<NotificationsConfig>,
+}
+
+impl Config {
+    /// Load configuration from a TOML file at `path`.
+    ///
+    /// Returns an error if the file cannot be read or parsed, or if any
+    /// referenced credential environment variables are unset.
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e))?;
+
+        let config: Config = toml::from_str(&contents)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
+
+        // Validate that all credential env vars are set.
+        for repo in &config.repos {
+            for (var_name, _) in &repo.credential_env_vars {
+                if std::env::var(var_name).is_err() {
+                    anyhow::bail!(
+                        "Required environment variable '{}' for repo '{}' is not set",
+                        var_name,
+                        repo.name
+                    );
+                }
+            }
+        }
+
+        Ok(config)
+    }
+}
+
+/// The type of backup backend.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendType {
+    Restic,
+    // Borg will be added in Phase 4.
+}
+
+/// Configuration for a single backup repository.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RepoConfig {
+    /// A human-friendly name for this repository, used in CLI commands and
+    /// persistent storage.
+    pub name: String,
+
+    /// The backend engine (e.g. "restic", "borg").
+    pub backend: BackendType,
+
+    /// The repository URI (e.g. `s3:bucket/path`, `b2:bucket/path`,
+    /// `/rclone:remote:path`, `ssh:user@host:repo`).
+    pub uri: String,
+
+    /// A map of environment-variable names to descriptions of what they
+    /// provide.  The values themselves are read from the environment at
+    /// runtime — never stored in the config file.
+    #[serde(default)]
+    pub credential_env_vars: HashMap<String, String>,
+
+    /// Optional snapshot tag to filter by when selecting the latest snapshot.
+    pub snapshot_tag: Option<String>,
+}
+
+/// Optional notification settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NotificationsConfig {
+    /// Webhook URL for sending failure alerts.
+    pub webhook_url: String,
+
+    /// If true, only send notifications on failure (the default behaviour).
+    ///
+    /// Set to false to also send pass notifications (not recommended in
+    /// steady state).
+    #[serde(default = "default_on_failure_only")]
+    pub on_failure_only: bool,
+}
+
+fn default_on_failure_only() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_minimal_config() {
+        let toml_str = r#"
+[[repo]]
+name = "prod-s3"
+backend = "restic"
+uri = "s3:https://s3.us-east-1.amazonaws.com/bucket/prod"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(config.repos.len(), 1);
+        assert_eq!(config.repos[0].name, "prod-s3");
+        assert!(config.notifications.is_none());
+    }
+
+    #[test]
+    fn test_parse_full_config() {
+        let toml_str = r#"
+[[repo]]
+name = "prod-s3"
+backend = "restic"
+uri = "s3:https://s3.us-east-1.amazonaws.com/bucket/prod"
+snapshot_tag = "daily"
+
+[repo.credential_env_vars]
+RESTIC_REPOSITORY = "S3 repo path"
+AWS_ACCESS_KEY_ID = "S3 access key"
+
+[[repo]]
+name = "b2-backup"
+backend = "restic"
+uri = "b2:mybucket:/path"
+
+[notifications]
+webhook_url = "https://hooks.slack.com/xxx"
+on_failure_only = true
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(config.repos.len(), 2);
+        assert_eq!(config.repos[1].uri, "b2:mybucket:/path");
+        let notif = config.notifications.expect("notifications should be present");
+        assert_eq!(notif.webhook_url, "https://hooks.slack.com/xxx");
+        assert!(notif.on_failure_only);
+    }
+
+    #[test]
+    fn test_creds_empty_no_env_vars_set() {
+        // A config with no credential_env_vars should load fine even though
+        // the env vars aren't actually set (there are none to validate).
+        let toml_str = r#"
+[[repo]]
+name = "local"
+backend = "restic"
+uri = "s3:http://localhost:9000/test"
+"#;
+        // We don't call Config::load here because that requires real IO.
+        // Just verify the toml parsing works.
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert!(config.repos[0].credential_env_vars.is_empty());
+    }
+}

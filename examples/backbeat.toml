@@ -1,0 +1,46 @@
+# Backbeatin Sample Configuration
+#
+# Save this as backbeat.toml and run:
+#   backbeat verify <repo-name> -c backbeat.toml
+
+# ───────────────────────────────────────────────────────────
+# Repositories — repeat [[repo]] blocks for multiple repos
+# ───────────────────────────────────────────────────────────
+
+[[repo]]
+name = "prod-s3"
+backend = "restic"
+uri = "s3:https://s3.us-east-1.amazonaws.com/my-bucket/restic-repo"
+
+# Optional: only verify snapshots with a specific tag.
+snapshot_tag = "daily"
+
+# Map environment variable names to human descriptions.
+# The VALUES are read from the process environment at runtime.
+# NEVER put credentials directly in this config file.
+[repo.credential_env_vars]
+RESTIC_REPOSITORY = "S3 repo path"
+AWS_ACCESS_KEY_ID = "AWS access key ID for S3"
+AWS_SECRET_ACCESS_KEY = "AWS secret access key for S3"
+
+# ───────────────────────────────────────────────────────────
+# Another repo — Backblaze B2 example
+# ───────────────────────────────────────────────────────────
+
+[[repo]]
+name = "b2-backup"
+backend = "restic"
+uri = "b2:my-bucket:/restic"
+
+[repo.credential_env_vars]
+RESTIC_REPOSITORY = "B2 repo path"
+B2_ACCOUNT_ID = "Backblaze application key ID"
+B2_ACCOUNT_KEY = "Backblaze application key"
+
+# ───────────────────────────────────────────────────────────
+# Notifications (optional)
+# ───────────────────────────────────────────────────────────
+#
+# [notifications]
+# webhook_url = "https://hooks.slack.com/services/T00/B00/xxxx"
+# on_failure_only = true

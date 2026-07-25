@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/backbeat-core",
+    "crates/backbeat-cli",
+]
