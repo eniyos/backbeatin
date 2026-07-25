@@ -24,5 +24,9 @@ pub enum Commands {
         /// Path to the TOML configuration file.
         #[arg(short, long, default_value = "backbeat.toml")]
         config: PathBuf,
+
+        /// Path to the SQLite database for persisting run history.
+        #[arg(long, default_value = "backbeat.db")]
+        db_path: PathBuf,
     },
 }

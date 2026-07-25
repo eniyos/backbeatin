@@ -3,6 +3,7 @@ use std::io::Read;
 use std::path::Path;
 
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::repo::RestoreOutcome;
@@ -12,7 +13,7 @@ use crate::repo::RestoreOutcome;
 // ---------------------------------------------------------------------------
 
 /// A single entry in a restore manifest.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestEntry {
     /// Relative path of the file within the restored tree.
     pub relative_path: String,
@@ -23,7 +24,7 @@ pub struct ManifestEntry {
 }
 
 /// A manifest describing every file under a restored directory tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     /// All entries, indexed by relative path for convenient lookup.
     pub entries: BTreeMap<String, ManifestEntry>,
@@ -45,7 +46,7 @@ impl Manifest {
 // ---------------------------------------------------------------------------
 
 /// The outcome of a verification check.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerificationStatus {
     Pass,
     Fail,
@@ -173,11 +174,7 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
     let actual_count = non_dir_entries;
 
     if backend_count > 0 {
-        let diff = if backend_count > actual_count {
-            backend_count - actual_count
-        } else {
-            actual_count - backend_count
-        };
+        let diff = backend_count.abs_diff(actual_count);
         let threshold = (backend_count.max(actual_count) as f64 * 0.05).ceil() as u64;
         if diff > threshold.max(1) {
             let msg = format!(

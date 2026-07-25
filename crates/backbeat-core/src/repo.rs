@@ -97,12 +97,7 @@ impl ResticBackend {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        // Inherit the parent environment so standard env vars flow through,
-        // then layer our credential overrides on top.
-        cmd.env_clear();
-        for (key, val) in std::env::vars() {
-            cmd.env(key, val);
-        }
+        // Layer credential overrides on top of the inherited environment.
         for (key, val) in &self.env_overrides {
             cmd.env(key, val);
         }

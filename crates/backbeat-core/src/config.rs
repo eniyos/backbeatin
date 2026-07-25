@@ -29,7 +29,7 @@ impl Config {
 
         // Validate that all credential env vars are set.
         for repo in &config.repos {
-            for (var_name, _) in &repo.credential_env_vars {
+            for var_name in repo.credential_env_vars.keys() {
                 if std::env::var(var_name).is_err() {
                     anyhow::bail!(
                         "Required environment variable '{}' for repo '{}' is not set",

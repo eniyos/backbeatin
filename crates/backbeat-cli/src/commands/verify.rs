@@ -2,20 +2,24 @@ use std::path::Path;
 
 use anyhow::Context;
 use backbeat_core::{
-    verify_restore, compute_manifest, Config, RepoConfig, ResticBackend, BackupBackend,
-    VerificationStatus,
+    compute_manifest, verify_restore, BackupBackend, Config, NewVerificationRun, RepoConfig,
+    ResticBackend, Store, VerificationStatus,
 };
 
 /// Execute the `verify` subcommand.
 ///
-/// 1. Load configuration from `config_path`.
-/// 2. Find `RepoConfig` by `repo_name`.
-/// 3. Instantiate the correct backend.
-/// 4. Create a temp directory and restore the latest snapshot into it.
-/// 5. Compute a manifest of restored files (SHA-256 + size).
-/// 6. Compare the manifest against the backend-reported outcome.
+/// 1. Load config and open the store (SQLite DB).
+/// 2. Find the `RepoConfig` by `repo_name`.
+/// 3. Create a temp directory and restore the latest snapshot into it.
+/// 4. Compute a manifest of restored files (SHA-256 + size).
+/// 5. Compare the manifest against the backend-reported outcome.
+/// 6. Persist the run to the store.
 /// 7. Print pass/fail and exit with the appropriate code.
-pub async fn run_verify(config_path: &Path, repo_name: &str) -> anyhow::Result<()> {
+pub async fn run_verify(
+    config_path: &Path,
+    repo_name: &str,
+    db_path: &Path,
+) -> anyhow::Result<()> {
     let config = Config::load(config_path)
         .context("Failed to load configuration")?;
 
@@ -29,15 +33,19 @@ pub async fn run_verify(config_path: &Path, repo_name: &str) -> anyhow::Result<(
             config_path.display()
         ))?;
 
-    run_restore(repo_config).await?;
+    let store = Store::open(db_path).context("Failed to open store database")?;
+
+    run_restore(repo_config, &store).await?;
 
     Ok(())
 }
 
-/// Perform the actual restore and verification for a single repo config.
-async fn run_restore(config: &RepoConfig) -> anyhow::Result<()> {
+/// Perform the actual restore, verification, and persistence.
+async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
     let backend = ResticBackend::from_config(config)
         .context("Failed to initialise Restic backend from config")?;
+
+    let started_at = backbeat_core::store::unix_now();
 
     // --- Step 1: discover latest snapshot ---
     tracing::info!("Looking up latest snapshot for repo '{}'…", config.name);
@@ -71,9 +79,37 @@ async fn run_restore(config: &RepoConfig) -> anyhow::Result<()> {
         manifest.total_bytes,
     );
 
+    let completed_at = backbeat_core::store::unix_now();
+
     // --- Step 4: verify ---
     let result = verify_restore(&outcome, &manifest);
 
+    // --- Step 5: persist to store ---
+    let status_str = match result.status {
+        VerificationStatus::Pass => "pass".to_string(),
+        VerificationStatus::Fail => "fail".to_string(),
+    };
+    let run_record = NewVerificationRun {
+        repo_name: config.name.clone(),
+        repo_backend: format!("{:?}", config.backend).to_lowercase(),
+        repo_uri: config.uri.clone(),
+        snapshot_id: snapshot_id.clone(),
+        status: result.status,
+        files_count: outcome.files_count,
+        bytes_restored: outcome.bytes_restored,
+        message: result.message.clone(),
+        manifest: Some(manifest),
+        started_at,
+        completed_at,
+    };
+
+    if let Err(e) = store.insert_verification_run(&run_record) {
+        tracing::warn!("Failed to persist verification run: {}", e);
+    } else {
+        tracing::info!("Run persisted to store ({})", status_str);
+    }
+
+    // --- Step 6: report result ---
     match result.status {
         VerificationStatus::Pass => {
             tracing::info!("✅ VERIFICATION PASSED: {}", result.message);
@@ -83,7 +119,6 @@ async fn run_restore(config: &RepoConfig) -> anyhow::Result<()> {
         VerificationStatus::Fail => {
             tracing::error!("❌ VERIFICATION FAILED: {}", result.message);
             eprintln!("ERROR: {}", result.message);
-            // Exit with a non-zero code for scripting convenience.
             std::process::exit(1);
         }
     }
