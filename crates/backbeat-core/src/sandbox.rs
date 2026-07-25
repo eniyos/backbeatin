@@ -10,8 +10,9 @@ use bollard::models::HostConfig;
 use bollard::Docker;
 use futures_util::StreamExt;
 
-/// Default Docker image to use for running restic commands inside a sandbox.
-const DEFAULT_IMAGE: &str = "restic/restic:latest";
+/// Default Docker image to use for running backup-tool commands inside a sandbox.
+pub const DEFAULT_IMAGE_RESTIC: &str = "restic/restic:latest";
+pub const DEFAULT_IMAGE_BORG: &str = "borgbackup/borg:latest";
 
 /// Path inside the container where restored files appear.
 const CONTAINER_OUTPUT_PATH: &str = "/restore-output";
@@ -35,13 +36,16 @@ impl Sandbox {
     ///
     /// Returns an error if Docker is not available or the user lacks
     /// permission to access the socket.
+    ///
+    /// Defaults to using the restic Docker image; call [`Self::with_image`]
+    /// or the backend-specific runners to override.
     pub async fn connect() -> anyhow::Result<Self> {
         let docker = Docker::connect_with_local_defaults()
             .context("Failed to connect to Docker daemon. Is it installed and running?")?;
 
         Ok(Self {
             docker,
-            image: DEFAULT_IMAGE.to_string(),
+            image: DEFAULT_IMAGE_RESTIC.to_string(),
         })
     }
 
@@ -121,6 +125,56 @@ impl Sandbox {
             .run_command(cmd, env, vec![bind])
             .await
             .context("Docker container restore failed")?;
+
+        Ok(stdout)
+    }
+
+    /// Run a Borg extract operation inside an ephemeral Docker container.
+    ///
+    /// This is the Borg equivalent of [`Self::run_restic_restore`], using the
+    /// `borgbackup/borg` image and Borg's `extract` command syntax.
+    pub async fn run_borg_extract(
+        &self,
+        config: &crate::config::RepoConfig,
+        archive_name: &str,
+        host_output_dir: &Path,
+    ) -> anyhow::Result<Vec<u8>> {
+        // Resolve credential env vars from the process environment.
+        let env: Vec<String> = config
+            .credential_env_vars
+            .keys()
+            .map(|var| {
+                let val = std::env::var(var).with_context(|| {
+                    format!(
+                        "Required env var '{}' for repo '{}' is not set",
+                        var, config.name
+                    )
+                })?;
+                Ok(format!("{}={}", var, val))
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        // Build the Borg command arguments inside the container.
+        let archive_ref = format!("{}::{}", config.uri, archive_name);
+        let cmd = vec![
+            "extract".to_string(),
+            "--destination".to_string(),
+            CONTAINER_OUTPUT_PATH.to_string(),
+            archive_ref,
+        ];
+
+        // Bind-mount the host output directory into the container.
+        let bind = format!("{}:{}", host_output_dir.display(), CONTAINER_OUTPUT_PATH);
+
+        tracing::info!(
+            "Running Borg extract inside Docker container (image: {})…",
+            self.image
+        );
+
+        let (stdout, _stderr) = self
+            .run_command(cmd, env, vec![bind])
+            .await
+            .context("Docker container Borg extract failed")?;
 
         Ok(stdout)
     }

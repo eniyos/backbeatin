@@ -57,7 +57,7 @@ impl Config {
 #[serde(rename_all = "lowercase")]
 pub enum BackendType {
     Restic,
-    // Borg will be added in Phase 4.
+    Borg,
 }
 
 /// Configuration for a single backup repository.

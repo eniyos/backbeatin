@@ -2,8 +2,9 @@ use std::path::Path;
 
 use anyhow::Context;
 use backbeat_core::{
-    compute_manifest, verify_restore, BackupBackend, Config, NewVerificationRun, RepoConfig,
-    ResticBackend, Sandbox, Store, VerificationStatus,
+    compute_manifest, verify_restore, BackendType, BorgBackend, BackupBackend, Config,
+    NewVerificationRun, RepoConfig, ResticBackend, RestoreOutcome, Sandbox, Store,
+    VerificationStatus,
 };
 
 /// Execute the `verify` subcommand.
@@ -42,17 +43,25 @@ pub async fn run_verify(
 
 /// Perform the actual restore, verification, and persistence.
 async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
-    let backend = ResticBackend::from_config(config)
-        .context("Failed to initialise Restic backend from config")?;
-
     let started_at = backbeat_core::store::unix_now();
 
     // --- Step 1: discover latest snapshot ---
     tracing::info!("Looking up latest snapshot for repo '{}'…", config.name);
-    let snapshot_id = backend
-        .latest_snapshot_id()
-        .await
-        .context("Failed to discover latest snapshot ID")?;
+
+    let snapshot_id = match config.backend {
+        BackendType::Restic => {
+            let backend = ResticBackend::from_config(config)
+                .context("Failed to initialise Restic backend from config")?;
+            backend.latest_snapshot_id().await
+                .context("Failed to discover latest snapshot ID")?
+        }
+        BackendType::Borg => {
+            let backend = BorgBackend::from_config(config)
+                .context("Failed to initialise Borg backend from config")?;
+            backend.latest_snapshot_id().await
+                .context("Failed to discover latest Borg archive name")?
+        }
+    };
     tracing::info!("Latest snapshot: {}", snapshot_id);
 
     // --- Step 2: restore into temp directory via Docker sandbox ---
@@ -66,20 +75,36 @@ async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
     let sandbox = Sandbox::connect()
         .await
         .context("Failed to connect to Docker for sandbox restore")?;
-    sandbox.ensure_image().await?;
 
-    let restore_stdout = sandbox
-        .run_restic_restore(config, &snapshot_id, tmp_dir.path())
-        .await
-        .context("Sandbox restore failed")?;
-
-    let outcome = ResticBackend::parse_restore_output(&restore_stdout, &snapshot_id)
-        .context("Failed to parse restic restore output from container")?;
-    tracing::info!(
-        "Restore completed: {} files, {} bytes",
-        outcome.files_count,
-        outcome.bytes_restored,
-    );
+    let (outcome, _restore_stdout) = match config.backend {
+        BackendType::Restic => {
+            let sb = sandbox.with_image(backbeat_core::sandbox::DEFAULT_IMAGE_RESTIC);
+            sb.ensure_image().await?;
+            let stdout = sb
+                .run_restic_restore(config, &snapshot_id, tmp_dir.path())
+                .await
+                .context("Sandbox restic restore failed")?;
+            let outcome = ResticBackend::parse_restore_output(&stdout, &snapshot_id)
+                .context("Failed to parse restic restore JSON output from container")?;
+            (outcome, Some(stdout))
+        }
+        BackendType::Borg => {
+            let sb = sandbox.with_image(backbeat_core::sandbox::DEFAULT_IMAGE_BORG);
+            sb.ensure_image().await?;
+            let stdout = sb
+                .run_borg_extract(config, &snapshot_id, tmp_dir.path())
+                .await
+                .context("Sandbox Borg extract failed")?;
+            // Borg does not produce JSON output for extract — return zero
+            // stats and let the manifest-based verification do the real check.
+            let outcome = RestoreOutcome {
+                snapshot_id: snapshot_id.clone(),
+                files_count: 0,
+                bytes_restored: 0,
+            };
+            (outcome, Some(stdout))
+        }
+    };
 
     // --- Step 3: compute manifest ---
     tracing::info!("Computing manifest of restored files…");

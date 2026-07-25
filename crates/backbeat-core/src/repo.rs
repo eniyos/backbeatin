@@ -262,6 +262,182 @@ impl BackupBackend for ResticBackend {
 }
 
 // ---------------------------------------------------------------------------
+// Borg backend
+// ---------------------------------------------------------------------------
+
+/// A [`BackupBackend`] implementation that shells out to the `borg` CLI.
+pub struct BorgBackend {
+    repo: String,
+    env_overrides: Vec<(String, String)>,
+}
+
+impl BorgBackend {
+    /// Create a new `BorgBackend` from a [`RepoConfig`].
+    pub fn from_config(config: &RepoConfig) -> anyhow::Result<Self> {
+        let env_overrides: Vec<(String, String)> = config
+            .credential_env_vars
+            .keys()
+            .map(|var| {
+                let val = std::env::var(var).with_context(|| {
+                    format!("Required env var '{}' is not set for repo '{}'", var, config.name)
+                })?;
+                Ok((var.clone(), val))
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        Ok(Self {
+            repo: config.uri.clone(),
+            env_overrides,
+        })
+    }
+
+    /// Build a `tokio::process::Command` with `borg` at the front.
+    fn borg_command(&self) -> Command {
+        let mut cmd = Command::new("borg");
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        for (key, val) in &self.env_overrides {
+            cmd.env(key, val);
+        }
+
+        cmd
+    }
+
+    /// Parse the JSON output of `borg list --json <repo>`.
+    ///
+    /// Output format:
+    /// ```json
+    /// {"archives":[{"name":"host-2024-01-15","time":"...",...}, ...], "repository":{...}}
+    /// ```
+    /// Archives are listed in chronological order; the last entry is the latest.
+    fn parse_latest_archive(output: &[u8]) -> anyhow::Result<String> {
+        let parsed: serde_json::Value = serde_json::from_slice(output)
+            .context("Failed to parse borg list JSON output")?;
+
+        let archives = parsed["archives"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'archives' array in borg list output"))?;
+
+        let latest = archives
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("No archives found in Borg repository"))?;
+
+        let name = latest["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'name' field in Borg archive entry"))?;
+
+        Ok(name.to_string())
+    }
+}
+
+#[async_trait]
+impl BackupBackend for BorgBackend {
+    async fn latest_snapshot_id(&self) -> anyhow::Result<String> {
+        let mut cmd = self.borg_command();
+        cmd.arg("list").arg("--json").arg(&self.repo);
+
+        let output = cmd
+            .output()
+            .await
+            .context("Failed to run 'borg list' — is borg installed and on PATH?")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "borg list failed (exit {}){}",
+                output.status,
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", stderr.trim())
+                }
+            );
+        }
+
+        Self::parse_latest_archive(&output.stdout)
+    }
+
+    async fn restore_snapshot(
+        &self,
+        snapshot_id: &str,
+        target_dir: &Path,
+    ) -> anyhow::Result<RestoreOutcome> {
+        let mut cmd = self.borg_command();
+        // Borg extract: borg extract --destination <dir> <repo>::<archive>
+        let archive_ref = format!("{}::{}", self.repo, snapshot_id);
+        cmd.arg("extract")
+            .arg("--destination")
+            .arg(target_dir)
+            .arg(&archive_ref);
+
+        let output = cmd
+            .output()
+            .await
+            .context("Failed to run 'borg extract'")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "borg extract failed (exit {}){}",
+                output.status,
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", stderr.trim())
+                }
+            );
+        }
+
+        // Borg does not produce meaningful JSON for extract; return zero
+        // stats and let the manifest-based verification do the real check.
+        Ok(RestoreOutcome {
+            snapshot_id: snapshot_id.to_string(),
+            files_count: 0,
+            bytes_restored: 0,
+        })
+    }
+
+    async fn repo_stats(&self) -> anyhow::Result<RepoStats> {
+        let mut cmd = self.borg_command();
+        cmd.arg("list").arg("--json").arg(&self.repo);
+
+        let output = cmd
+            .output()
+            .await
+            .context("Failed to run 'borg list' for stats")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "borg list failed (exit {}){}",
+                output.status,
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", stderr.trim())
+                }
+            );
+        }
+
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse borg list JSON output")?;
+
+        let archives = parsed["archives"].as_array();
+        let snapshot_count = archives.map(|a| a.len() as u64).unwrap_or(0);
+        let latest_snapshot = archives
+            .and_then(|a| a.last())
+            .and_then(|a| a["name"].as_str())
+            .map(|s| s.to_string());
+
+        Ok(RepoStats {
+            snapshot_count,
+            latest_snapshot,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -308,5 +484,35 @@ mod tests {
         let json = br#"{"total_snapshots": 42}"#;
         let stats = ResticBackend::parse_stats_output(json).expect("should parse");
         assert_eq!(stats.snapshot_count, 42);
+    }
+
+    // ── Borg tests ──
+
+    #[test]
+    fn test_borg_parse_latest_archive() {
+        let json = br#"{
+            "archives": [
+                {"name": "host-2024-01-14", "time": "2024-01-14T10:00:00Z"},
+                {"name": "host-2024-01-15", "time": "2024-01-15T10:00:00Z"}
+            ],
+            "repository": {"id": "abc", "location": "/backup"}
+        }"#;
+
+        let name = BorgBackend::parse_latest_archive(json).expect("should parse");
+        assert_eq!(name, "host-2024-01-15");
+    }
+
+    #[test]
+    fn test_borg_parse_empty_archives_fails() {
+        let json = br#"{"archives": [], "repository": {"id": "abc", "location": "/backup"}}"#;
+        let err = BorgBackend::parse_latest_archive(json).unwrap_err();
+        assert!(err.to_string().contains("No archives found"));
+    }
+
+    #[test]
+    fn test_borg_parse_missing_archives_fails() {
+        let json = br#"{"repository": {"id": "abc"}}"#;
+        let err = BorgBackend::parse_latest_archive(json).unwrap_err();
+        assert!(err.to_string().contains("Missing 'archives' array"));
     }
 }
