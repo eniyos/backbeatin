@@ -129,7 +129,10 @@ impl ResticBackend {
     /// Restic's JSON restore output prints one JSON-Line per message.
     /// The final "summary" line contains `message_type: "summary"` with
     /// `total_files` and `total_bytes`.
-    fn parse_restore_output(output: &[u8], snapshot_id: &str) -> anyhow::Result<RestoreOutcome> {
+    ///
+    /// This is `pub` so that callers using a sandbox (Docker) can parse
+    /// captured container output into a `RestoreOutcome`.
+    pub fn parse_restore_output(output: &[u8], snapshot_id: &str) -> anyhow::Result<RestoreOutcome> {
         let text =
             String::from_utf8(output.to_vec()).context("restic restore output was not UTF-8")?;
 

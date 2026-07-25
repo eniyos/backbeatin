@@ -16,3 +16,6 @@ hex = "0.4"
 walkdir = "2"
 tokio = { version = "1", features = ["full"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+tracing = "0.1"
+bollard = "0.17"
+futures-util = "0.3"

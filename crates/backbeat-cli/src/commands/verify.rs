@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use backbeat_core::{
     compute_manifest, verify_restore, BackupBackend, Config, NewVerificationRun, RepoConfig,
-    ResticBackend, Store, VerificationStatus,
+    ResticBackend, Sandbox, Store, VerificationStatus,
 };
 
 /// Execute the `verify` subcommand.
@@ -55,14 +55,26 @@ async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
         .context("Failed to discover latest snapshot ID")?;
     tracing::info!("Latest snapshot: {}", snapshot_id);
 
-    // --- Step 2: restore into temp directory ---
+    // --- Step 2: restore into temp directory via Docker sandbox ---
     let tmp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
-    tracing::info!("Restoring snapshot {} into {:?}…", snapshot_id, tmp_dir.path());
+    tracing::info!(
+        "Restoring snapshot {} into {:?} (Docker sandbox)…",
+        snapshot_id,
+        tmp_dir.path(),
+    );
 
-    let outcome = backend
-        .restore_snapshot(&snapshot_id, tmp_dir.path())
+    let sandbox = Sandbox::connect()
         .await
-        .context("Restore operation failed")?;
+        .context("Failed to connect to Docker for sandbox restore")?;
+    sandbox.ensure_image().await?;
+
+    let restore_stdout = sandbox
+        .run_restic_restore(config, &snapshot_id, tmp_dir.path())
+        .await
+        .context("Sandbox restore failed")?;
+
+    let outcome = ResticBackend::parse_restore_output(&restore_stdout, &snapshot_id)
+        .context("Failed to parse restic restore output from container")?;
     tracing::info!(
         "Restore completed: {} files, {} bytes",
         outcome.files_count,
