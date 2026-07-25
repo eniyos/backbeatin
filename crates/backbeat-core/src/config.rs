@@ -172,6 +172,28 @@ uri = "s3:bucket/two"
     }
 
     #[test]
+    fn test_parse_borg_config() {
+        let toml_str = r#"
+[[repo]]
+name = "prod-borg"
+backend = "borg"
+uri = "ssh://user@host:./repo"
+
+[repo.credential_env_vars]
+BORG_PASSPHRASE = "repo passphrase"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse Borg config");
+        assert_eq!(config.repos.len(), 1);
+        assert_eq!(config.repos[0].name, "prod-borg");
+        match config.repos[0].backend {
+            BackendType::Borg => {} // expected
+            _ => panic!("expected Borg backend"),
+        }
+        assert_eq!(config.repos[0].uri, "ssh://user@host:./repo");
+        assert!(config.repos[0].credential_env_vars.contains_key("BORG_PASSPHRASE"));
+    }
+
+    #[test]
     fn test_creds_empty_no_env_vars_set() {
         // A config with no credential_env_vars should load fine even though
         // the env vars aren't actually set (there are none to validate).

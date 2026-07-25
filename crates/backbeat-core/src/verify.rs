@@ -166,9 +166,10 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
 
     // --- Check 2: backend reported a non-zero count ---
     // If the backend reports 0 files but we found files on disk, something is
-    // inconsistent (e.g. a change in CLI output format).
+    // inconsistent (e.g. a change in CLI output format).  Skip this check
+    // for backends that don't report meaningful file counts (e.g. Borg).
     let backend_count = outcome.files_count;
-    if backend_count == 0 && actual_count > 0 {
+    if outcome.count_is_meaningful && backend_count == 0 && actual_count > 0 {
         return VerificationResult {
             status: VerificationStatus::Fail,
             message: format!(
@@ -248,6 +249,7 @@ mod tests {
             snapshot_id: "test".into(),
             files_count: 10,
             bytes_restored: 1000,
+            count_is_meaningful: true,
         };
 
         let result = verify_restore(&outcome, &manifest);
@@ -276,6 +278,7 @@ mod tests {
             snapshot_id: "test".into(),
             files_count: 105, // 5% diff — should still pass
             bytes_restored: 10_500,
+            count_is_meaningful: true,
         };
 
         let result = verify_restore(&outcome, &manifest);
@@ -302,6 +305,7 @@ mod tests {
             snapshot_id: "test".into(),
             files_count: 0, // backend says 0 but we found files
             bytes_restored: 0,
+            count_is_meaningful: true,
         };
 
         let result = verify_restore(&outcome, &manifest);
@@ -321,12 +325,42 @@ mod tests {
             snapshot_id: "test".into(),
             files_count: 0,
             bytes_restored: 0,
+            count_is_meaningful: true,
         };
         let result = verify_restore(&outcome, &manifest);
         // Should fail because the manifest is empty (check 1), not because of
         // the zero-backend check (check 2).
         assert_eq!(result.status, VerificationStatus::Fail);
         assert!(result.message.contains("empty directory"));
+    }
+
+    #[test]
+    fn test_zero_backend_not_meaningful_skips_check() {
+        // Backends like Borg that don't report file counts should not fail
+        // the zero-count check.  Verification relies purely on manifest.
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "file1".into(),
+            ManifestEntry {
+                relative_path: "file1".into(),
+                sha256: "abc".into(),
+                size: 100,
+            },
+        );
+        let manifest = Manifest {
+            total_files: 1,
+            total_bytes: 100,
+            entries,
+        };
+        let outcome = RestoreOutcome {
+            snapshot_id: "test".into(),
+            files_count: 0,
+            bytes_restored: 0,
+            count_is_meaningful: false,
+        };
+
+        let result = verify_restore(&outcome, &manifest);
+        assert_eq!(result.status, VerificationStatus::Pass);
     }
 
     #[test]
@@ -349,6 +383,7 @@ mod tests {
             snapshot_id: "test".into(),
             files_count: 500, // wildly different — should fail
             bytes_restored: 50_000,
+            count_is_meaningful: true,
         };
 
         let result = verify_restore(&outcome, &manifest);

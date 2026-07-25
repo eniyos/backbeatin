@@ -101,6 +101,7 @@ async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
                 snapshot_id: snapshot_id.clone(),
                 files_count: 0,
                 bytes_restored: 0,
+                count_is_meaningful: false,
             };
             (outcome, Some(stdout))
         }

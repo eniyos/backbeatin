@@ -20,6 +20,13 @@ pub struct RestoreOutcome {
     pub files_count: u64,
     /// The total number of bytes restored (as reported by the backend).
     pub bytes_restored: u64,
+    /// Whether `files_count` / `bytes_restored` come from actual backend
+    /// output (true) or are placeholders because the backend does not
+    /// report counts (false, e.g. Borg's `extract` command).
+    ///
+    /// When `false`, verification will skip the zero-count check and rely
+    /// purely on manifest-based comparison.
+    pub count_is_meaningful: bool,
 }
 
 /// Summary statistics about a repository.
@@ -158,6 +165,7 @@ impl ResticBackend {
             snapshot_id: snapshot_id.to_string(),
             files_count,
             bytes_restored,
+            count_is_meaningful: true,
         })
     }
 
@@ -395,6 +403,7 @@ impl BackupBackend for BorgBackend {
             snapshot_id: snapshot_id.to_string(),
             files_count: 0,
             bytes_restored: 0,
+            count_is_meaningful: false,
         })
     }
 
