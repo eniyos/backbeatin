@@ -149,14 +149,11 @@ pub fn compute_manifest(dir: &Path) -> anyhow::Result<Manifest> {
 ///
 /// For Phase 1 this checks:
 ///   * The manifest is non-empty (files were actually restored).
+///   * The backend reported a non-zero file count (if we found files).
 ///   * The file count from the manifest roughly matches what the backend
 ///     reported (allow a small delta for metadata entries).
 pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> VerificationResult {
-    let non_dir_entries = manifest
-        .entries
-        .values()
-        .filter(|e| e.size > 0 || !e.sha256.is_empty())
-        .count() as u64;
+    let actual_count = manifest.total_files;
 
     // --- Check 1: restore actually produced files ---
     if manifest.entries.is_empty() {
@@ -167,12 +164,25 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
         };
     }
 
-    // --- Check 2: file count plausibility ---
+    // --- Check 2: backend reported a non-zero count ---
+    // If the backend reports 0 files but we found files on disk, something is
+    // inconsistent (e.g. a change in CLI output format).
+    let backend_count = outcome.files_count;
+    if backend_count == 0 && actual_count > 0 {
+        return VerificationResult {
+            status: VerificationStatus::Fail,
+            message: format!(
+                "Backend reported 0 files, but restore produced {} files on disk — \
+                 possible JSON output format change",
+                actual_count,
+            ),
+            manifest: manifest.clone(),
+        };
+    }
+
+    // --- Check 3: file count plausibility ---
     // Allow up to 5% discrepancy: the backend may count differently from
     // what we discover on disk (e.g. metadata files, directories).
-    let backend_count = outcome.files_count;
-    let actual_count = non_dir_entries;
-
     if backend_count > 0 {
         let diff = backend_count.abs_diff(actual_count);
         let threshold = (backend_count.max(actual_count) as f64 * 0.05).ceil() as u64;
@@ -190,7 +200,7 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
         }
     }
 
-    // --- Check 3: no zero-byte files that shouldn't be zero ---
+    // --- Check 4: no zero-byte files that shouldn't be zero ---
     // (This is a soft check — some legit files may be empty.  We warn but
     // don't fail on this in Phase 1.)
     let zero_byte_files: Vec<&ManifestEntry> = manifest
@@ -202,13 +212,13 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
     let pass_msg = if zero_byte_files.is_empty() {
         format!(
             "Restore verified successfully: {} files, {} bytes restored from snapshot {}",
-            non_dir_entries, manifest.total_bytes, outcome.snapshot_id
+            actual_count, manifest.total_bytes, outcome.snapshot_id
         )
     } else {
         format!(
             "Restore verified successfully: {} files, {} bytes restored from snapshot {} \
              ({} zero-byte files found)",
-            non_dir_entries, manifest.total_bytes, outcome.snapshot_id, zero_byte_files.len()
+            actual_count, manifest.total_bytes, outcome.snapshot_id, zero_byte_files.len()
         )
     };
 
@@ -270,6 +280,53 @@ mod tests {
 
         let result = verify_restore(&outcome, &manifest);
         assert_eq!(result.status, VerificationStatus::Pass);
+    }
+
+    #[test]
+    fn test_zero_backend_count_with_files_fails() {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "file1".into(),
+            ManifestEntry {
+                relative_path: "file1".into(),
+                sha256: "abc".into(),
+                size: 100,
+            },
+        );
+        let manifest = Manifest {
+            total_files: 1,
+            total_bytes: 100,
+            entries,
+        };
+        let outcome = RestoreOutcome {
+            snapshot_id: "test".into(),
+            files_count: 0, // backend says 0 but we found files
+            bytes_restored: 0,
+        };
+
+        let result = verify_restore(&outcome, &manifest);
+        assert_eq!(result.status, VerificationStatus::Fail);
+        assert!(result.message.contains("Backend reported 0 files"));
+    }
+
+    #[test]
+    fn test_zero_backend_count_empty_manifest_still_fails() {
+        // Even if both sides report 0, an empty restore should still fail.
+        let manifest = Manifest {
+            entries: BTreeMap::new(),
+            total_files: 0,
+            total_bytes: 0,
+        };
+        let outcome = RestoreOutcome {
+            snapshot_id: "test".into(),
+            files_count: 0,
+            bytes_restored: 0,
+        };
+        let result = verify_restore(&outcome, &manifest);
+        // Should fail because the manifest is empty (check 1), not because of
+        // the zero-backend check (check 2).
+        assert_eq!(result.status, VerificationStatus::Fail);
+        assert!(result.message.contains("empty directory"));
     }
 
     #[test]

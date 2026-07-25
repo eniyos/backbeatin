@@ -118,8 +118,9 @@ async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
         }
         VerificationStatus::Fail => {
             tracing::error!("❌ VERIFICATION FAILED: {}", result.message);
-            eprintln!("ERROR: {}", result.message);
-            std::process::exit(1);
+            // Return an error so destructors (TempDir, DB connection) run
+            // properly before the process exits with non-zero status.
+            Err(anyhow::anyhow!("{}", result.message))
         }
     }
 }

@@ -18,8 +18,9 @@ snapshot_tag = "daily"
 # Map environment variable names to human descriptions.
 # The VALUES are read from the process environment at runtime.
 # NEVER put credentials directly in this config file.
+# Backbeatin passes --repo <uri> explicitly, so RESTIC_REPOSITORY is not
+# needed here — only credential env vars (access keys, passwords, etc.).
 [repo.credential_env_vars]
-RESTIC_REPOSITORY = "S3 repo path"
 AWS_ACCESS_KEY_ID = "AWS access key ID for S3"
 AWS_SECRET_ACCESS_KEY = "AWS secret access key for S3"
 
@@ -33,7 +34,6 @@ backend = "restic"
 uri = "b2:my-bucket:/restic"
 
 [repo.credential_env_vars]
-RESTIC_REPOSITORY = "B2 repo path"
 B2_ACCOUNT_ID = "Backblaze application key ID"
 B2_ACCOUNT_KEY = "Backblaze application key"
 
