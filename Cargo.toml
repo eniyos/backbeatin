@@ -3,4 +3,5 @@ resolver = "2"
 members = [
     "crates/backbeat-core",
     "crates/backbeat-cli",
+    "crates/backbeat-bench",
 ]

@@ -60,7 +60,7 @@ fn stop_container(id: &str) {
 }
 
 /// Run restic via Docker with the given args.
-fn restic(host_port: u16, args: &[&str]) -> std::process::Output {
+fn restic(_host_port: u16, args: &[&str]) -> std::process::Output {
     StdCommand::new("docker")
         .args([
             "run", "--rm",

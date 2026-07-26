@@ -16,16 +16,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Run the daemon scheduler for periodic verification.
-    Daemon {
-        /// Path to the TOML configuration file.
-        #[arg(short, long, default_value = "backbeat.toml")]
-        config: PathBuf,
-
-        /// Path to the SQLite database for persisting run history.
-        #[arg(long, default_value = "backbeat.db")]
-        db_path: PathBuf,
-    },
     /// Verify a repository by performing a real restore.
     Verify {
         /// Name of the repository in the config file to verify.
@@ -38,5 +28,26 @@ pub enum Commands {
         /// Path to the SQLite database for persisting run history.
         #[arg(long, default_value = "backbeat.db")]
         db_path: PathBuf,
+    },
+
+    /// Run the daemon scheduler for periodic verification.
+    Daemon {
+        /// Path to the TOML configuration file.
+        #[arg(short, long, default_value = "backbeat.toml")]
+        config: PathBuf,
+
+        /// Path to the SQLite database for persisting run history.
+        #[arg(long, default_value = "backbeat.db")]
+        db_path: PathBuf,
+    },
+
+    /// Run a self-contained demo against a synthetic MinIO-backed repo.
+    ///
+    /// Creates a healthy backup (verify passes), corrupts the repo
+    /// (verify fails), and exports a signed proof bundle.
+    Demo {
+        /// Output path for the proof bundle JSON.
+        #[arg(short, long, default_value = "demo-proof-bundle.json")]
+        output: PathBuf,
     },
 }

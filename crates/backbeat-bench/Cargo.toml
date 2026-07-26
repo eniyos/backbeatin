@@ -1,12 +1,8 @@
 [package]
-name = "backbeat-cli"
+name = "backbeat-bench"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-
-[[bin]]
-name = "backbeat"
-path = "src/main.rs"
 
 [dependencies]
 backbeat-core = { path = "../backbeat-core" }
@@ -15,9 +11,8 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tempfile = "3"
-tokio-cron-scheduler = "0.10"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[dev-dependencies]
-testcontainers = "0.23"
+tempfile = "3"
+bollard = "0.17"
+futures-util = "0.3"

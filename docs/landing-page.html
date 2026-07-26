@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backbeatin — Prove Your Backups Actually Restore</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e1e4eb;
+    --text-muted: #8b8fa3;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .container { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* Header */
+  header { text-align: center; padding: 4rem 0 3rem; }
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 1rem;
+  }
+  header h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+  header .tagline {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  .badge {
+    display: inline-block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+  }
+
+  /* Sections */
+  section { margin: 3rem 0; }
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+  h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 1.5rem 0 0.5rem;
+  }
+  p { margin-bottom: 1rem; color: var(--text-muted); }
+  p strong { color: var(--text); }
+
+  /* Code blocks */
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 1rem 0;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+  }
+  pre .key { color: #79c0ff; }
+  pre .str { color: #a5d6ff; }
+  pre .num { color: #79c0ff; }
+  pre .bool { color: #d2a8ff; }
+  pre .null { color: #8b8fa3; }
+  pre .comment { color: #6e7681; }
+  pre .field-desc {
+    display: block;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.8rem;
+    margin-top: -0.25rem;
+    margin-bottom: 0.5rem;
+    padding-left: 1rem;
+    border-left: 2px solid var(--border);
+  }
+
+  /* Steps / Architecture */
+  .steps { list-style: none; counter-reset: step; }
+  .steps li {
+    counter-increment: step;
+    padding: 1rem 0 1rem 3rem;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 1rem;
+    width: 2rem;
+    height: 2rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .steps li:last-child { border-bottom: none; }
+  .steps li strong { display: block; margin-bottom: 0.25rem; }
+
+  /* Install */
+  .install-cmd {
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .install-cmd code {
+    color: var(--green);
+    font-size: 0.95rem;
+  }
+  .install-cmd .hint {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  /* CTA */
+  .cta {
+    text-align: center;
+    padding: 3rem 0;
+    border-top: 1px solid var(--border);
+    margin-top: 3rem;
+  }
+  .cta .button {
+    display: inline-block;
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+    padding: 0.85rem 2rem;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: opacity 0.2s;
+  }
+  .cta .button:hover { opacity: 0.9; }
+  .cta .sub {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 0.75rem;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    padding: 2rem 0;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--accent); }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.6rem; }
+    .install-cmd { flex-direction: column; align-items: flex-start; }
+    .install-cmd .hint { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div class="badge">v0.1.0 — Open Source</div>
+  <h1>Keep your backups <em>exactly where they are</em> —<br>we prove, every day, that they'd actually save you.</h1>
+  <p class="tagline">
+    Backbeatin is a single-binary Rust tool that automatically tests whether your
+    existing Restic and Borg backups can actually be restored. It runs restore-verify
+    cycles on your schedule, produces tamper-evident signed proofs, and alerts you
+    when a restore would fail — without migrating your backup provider.
+  </p>
+</header>
+
+<!-- Why this exists -->
+<section>
+  <h2>Why this exists</h2>
+  <p>
+    I've been running automated backups for years. Every system I've ever managed
+    had some form of backup script cronned into place. And almost none of them
+    had ever been tested.
+  </p>
+  <p>
+    When you ask someone "when was the last time you actually restored from your
+    backup?" — the answer is almost always "well, not recently" or "we tested it
+    once during setup." That's not a backup strategy; it's a hope.
+  </p>
+  <p>
+    The standard advice is to periodically do a test restore. But that's manual,
+    slow, and doesn't scale. If you have ten repos across three providers, you're
+    not going to manually restore each one every week. So the backups sit there,
+    accumulating, unverified.
+  </p>
+  <p>
+    <strong>Backbeatin automates the one thing everyone should be doing but nobody
+    does: proving, on a regular cadence, that your restore path still works.</strong>
+    It reads your existing repos — it doesn't need you to migrate anywhere — performs
+    a real restore into an ephemeral sandbox, cryptographically verifies the result,
+    signs a tamper-evident proof, and tells you if something broke.
+  </p>
+  <p style="font-size:0.9rem; color: var(--text-muted);">
+    No fabricated statistics. No "trusted by Fortune 500" claims. The only number
+    that matters is whether your latest backup actually restores.
+  </p>
+</section>
+
+<!-- Proof bundle -->
+<section>
+  <h2>What a proof looks like</h2>
+  <p>
+    Every verification run produces a signed record. A single export bundle contains
+    every run for a repo — including passes <em>and</em> failures. Here's an abbreviated
+    example generated by <code>backbeat demo</code>:
+  </p>
+  <pre>{
+  <span class="key">"version"</span>: <span class="num">1</span>,
+  <span class="key">"public_key"</span>: <span class="str">"a1b2c3..."</span>,  <span class="comment">// Ed25519 public key — verify any run signature with this</span>
+  <span class="key">"source"</span>: <span class="str">"backbeat demo..."</span>,
+  <span class="key">"runs"</span>: [
+    {
+      <span class="key">"id"</span>: <span class="num">1</span>,
+      <span class="key">"snapshot_id"</span>: <span class="str">"abc123def"</span>,     <span class="comment">// The specific snapshot that was restored</span>
+      <span class="key">"status"</span>: <span class="str">"pass"</span>,                <span class="comment">// "pass" or "fail"</span>
+      <span class="key">"files_count"</span>: <span class="num">42</span>,                <span class="comment">// Files restored and verified on disk</span>
+      <span class="key">"bytes_restored"</span>: <span class="num">1048576</span>,
+      <span class="key">"message"</span>: <span class="str">"Restore verified successfully: 42 files..."</span>,
+      <span class="key">"signature_hex"</span>: <span class="str">"f00d..."</span>,       <span class="comment">// Ed25519 signature over the run data</span>
+      <span class="key">"public_key_hex"</span>: <span class="str">"a1b2c3..."</span>
+    },
+    {
+      <span class="key">"id"</span>: <span class="num">2</span>,
+      <span class="key">"snapshot_id"</span>: <span class="str">"456defabc"</span>,
+      <span class="key">"status"</span>: <span class="str">"fail"</span>,                 <span class="comment">// This run caught a real problem</span>
+      <span class="key">"files_count"</span>: <span class="num">0</span>,
+      <span class="key">"bytes_restored"</span>: <span class="num">0</span>,
+      <span class="key">"message"</span>: <span class="str">"restic restore failed (exit 1): ..."</span>,
+      <span class="key">"signature_hex"</span>: <span class="str">"baad..."</span>
+    }
+  ]
+}</pre>
+  <p>
+    The bundle is literal JSON output from the <code>backbeat demo</code> command.
+    Every signature is generated by a real Ed25519 keypair created on first run.
+    The demo spins up a MinIO container, creates a healthy backup (passes),
+    corrupts the repo (fails), and exports both signed results.
+  </p>
+  <p>
+    Run <code>backbeat demo</code> yourself — it takes about 30 seconds and
+    produces <code>demo-proof-bundle.json</code> in your current directory.
+  </p>
+</section>
+
+<!-- How it works -->
+<section>
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li>
+      <strong>Point it at your repos</strong>
+      Write a TOML config listing your Restic or Borg repositories and the
+      environment variables containing their credentials (never the credentials
+      themselves — they're read from the environment at runtime).
+    </li>
+    <li>
+      <strong>Discovers the latest snapshot</strong>
+      <code>backbeat verify</code> runs <code>restic snapshots --json --latest 1</code>
+      (or <code>borg list --json</code>) locally to find the most recent backup
+      it should test.
+    </li>
+    <li>
+      <strong>Restores into a throwaway Docker container</strong>
+      The snapshot is extracted inside an ephemeral container using the official
+      restic/borg Docker image. Credentials are passed as environment variables,
+      never baked into an image. The container is destroyed (force-removed)
+      immediately after verification completes — including the bind-mounted
+      output volume. No restored data survives.
+    </li>
+    <li>
+      <strong>Cryptographically verifies every file</strong>
+      Every restored file is hashed with SHA-256 and recorded with its size and
+      relative path. The on-disk file count and structure are compared against
+      the backend's report. A zero-file report from the backend causes a fail
+      (unless the backend doesn't report counts, like Borg).
+    </li>
+    <li>
+      <strong>Signs and stores the result</strong>
+      Each run — including the snapshot ID, file count, manifest hash, status,
+      and timestamps — is signed with an Ed25519 keypair (auto-generated in
+      <code>~/.backbeatin/</code>) and stored in a local SQLite database.
+      The result is exported as a signed JSON bundle.
+    </li>
+    <li>
+      <strong>Alerts on failure</strong>
+      In daemon mode, verification runs on each repo's configured cron schedule.
+      On failure, it sends a Slack-formatted webhook to the URL you configure.
+    </li>
+  </ol>
+</section>
+
+<!-- Install -->
+<section>
+  <h2>Install</h2>
+  <p>Prerequisites: Rust 1.70+, Docker (for sandboxed restore), and the
+  <code>restic</code> or <code>borg</code> CLI binary on your PATH.</p>
+
+  <div class="install-cmd">
+    <code>cargo install --git https://github.com/eniyos/backbeatin.git</code>
+    <span class="hint">or</span>
+    <code>git clone ... &amp;&amp; cargo build --release</code>
+  </div>
+
+  <p>Or clone and build yourself:</p>
+  <pre><span class="comment"># Clone</span>
+git clone https://github.com/eniyos/backbeatin.git
+cd backbeatin
+
+<span class="comment"># Build</span>
+cargo build --release
+
+<span class="comment"># Configure (see examples/backbeat.toml)</span>
+cp examples/backbeat.toml backbeat.toml
+<span class="comment"># Edit backbeat.toml with your repo details, then:</span>
+
+<span class="comment"># Run a single verification</span>
+./target/release/backbeat verify my-repo -c backbeat.toml
+
+<span class="comment"># Run the daemon (scheduled verification)</span>
+./target/release/backbeat daemon -c backbeat.toml
+
+<span class="comment"># Generate a demo proof bundle</span>
+./target/release/backbeat demo --output demo-proof-bundle.json</pre>
+</section>
+
+<!-- FAQ / Design -->
+<section>
+  <h2>Design constraints</h2>
+  <p>
+    These aren't aspirational — they're enforced in the code:
+  </p>
+  <ul style="color: var(--text-muted); padding-left: 1.25rem; margin-bottom: 1rem;">
+    <li><strong>Single static binary.</strong> No Python, no Node, no runtime dependencies beyond Docker and the backup CLIs you already have.</li>
+    <li><strong>Never reimplements repository formats.</strong> Always shells out to the official restic/borg CLI. It parses their <code>--json</code> output — it doesn't guess at the on-disk format.</li>
+    <li><strong>Read-only by design.</strong> Never requires write access to your real backup repository.</li>
+    <li><strong>Ephemeral, isolated restores.</strong> Every restore is in a throwaway Docker container destroyed immediately after verification.</li>
+    <li><strong>Self-hosted, no phone-home.</strong> No telemetry. No required SaaS. No network calls except to your backup storage, your local Docker socket, and any webhook URL you explicitly configure.</li>
+    <li><strong>Tamper-evident records.</strong> Every run is Ed25519-signed at creation time. The proof bundle carries its own public key.</li>
+  </ul>
+</section>
+
+<!-- CTA -->
+<div class="cta">
+  <a class="button" href="https://github.com/eniyos/backbeatin">View on GitHub →</a>
+  <div class="sub">
+    MIT licensed. Single binary ~10MB. Currently supports Restic and Borg.
+  </div>
+</div>
+
+<footer>
+  <p>
+    Backbeatin v0.1.0 —
+    <a href="https://github.com/eniyos/backbeatin">github.com/eniyos/backbeatin</a>
+  </p>
+  <p style="margin-top:0.5rem;">
+    No trackers, no analytics, no cookies. This page is plain HTML/CSS
+    deployable to any static host.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

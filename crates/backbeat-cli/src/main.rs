@@ -23,6 +23,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Daemon { config, db_path } => {
             commands::daemon::run_daemon(&config, &db_path).await?;
         }
+        Commands::Demo { output } => {
+            commands::demo::run_demo(&output).await?;
+        }
     }
 
     Ok(())
