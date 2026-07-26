@@ -3,6 +3,10 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+/// Default cron schedule for repositories without an explicit schedule:
+/// every hour at the top of the minute.
+const DEFAULT_SCHEDULE: &str = "0 0 * * * *";
+
 /// The top-level configuration for Backbeatin.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -82,6 +86,17 @@ pub struct RepoConfig {
 
     /// Optional snapshot tag to filter by when selecting the latest snapshot.
     pub snapshot_tag: Option<String>,
+
+    /// Optional cron expression for daemon mode scheduling.
+    ///
+    /// Uses a 6-field cron format: "sec min hour day mon weekday"
+    /// Defaults to "0 0 * * * *" (every hour) if not set.
+    #[serde(default = "default_schedule")]
+    pub schedule: String,
+}
+
+fn default_schedule() -> String {
+    DEFAULT_SCHEDULE.to_string()
 }
 
 /// Optional notification settings.

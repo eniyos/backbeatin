@@ -11,3 +11,6 @@ pub use sandbox::Sandbox;
 pub use sign::Signer;
 pub use store::{Store, NewVerificationRun, VerificationRunRecord};
 pub use verify::{compute_manifest, verify_restore, Manifest, ManifestEntry, VerificationResult, VerificationStatus};
+
+pub mod notify;
+pub use notify::Notifier;

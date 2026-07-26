@@ -20,6 +20,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Verify { repo, config, db_path } => {
             commands::verify::run_verify(&config, &repo, &db_path).await?;
         }
+        Commands::Daemon { config, db_path } => {
+            commands::daemon::run_daemon(&config, &db_path).await?;
+        }
     }
 
     Ok(())

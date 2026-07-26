@@ -329,6 +329,7 @@ mod tests {
             uri: "s3:bucket/path".into(),
             credential_env_vars: std::collections::HashMap::new(),
             snapshot_tag: None,
+            schedule: "0 0 * * * *".to_string(),
         };
 
         let id1 = store.get_or_create_repo(&config).unwrap();

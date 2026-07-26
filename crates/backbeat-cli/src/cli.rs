@@ -16,6 +16,16 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Run the daemon scheduler for periodic verification.
+    Daemon {
+        /// Path to the TOML configuration file.
+        #[arg(short, long, default_value = "backbeat.toml")]
+        config: PathBuf,
+
+        /// Path to the SQLite database for persisting run history.
+        #[arg(long, default_value = "backbeat.db")]
+        db_path: PathBuf,
+    },
     /// Verify a repository by performing a real restore.
     Verify {
         /// Name of the repository in the config file to verify.
