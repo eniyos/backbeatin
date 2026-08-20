@@ -12,15 +12,15 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 
 **Option 1: Cargo**
 ```bash
-cargo install backbeat
+cargo install backbeatin
 ```
 
 **Option 2: Binary Download**
 ```bash
 # Download from GitHub releases
-wget https://github.com/eniyos/backbeatin/releases/download/v0.1.0/backbeat-linux-x86_64.tar.gz
-tar xzf backbeat-linux-x86_64.tar.gz
-sudo install backbeat /usr/local/bin/
+wget https://github.com/eniyos/backbeatin/releases/download/v0.1.0/backbeatin-linux-x86_64.tar.gz
+tar xzf backbeatin-linux-x86_64.tar.gz
+sudo install backbeatin /usr/local/bin/
 ```
 
 ### Configure
@@ -48,7 +48,7 @@ export AWS_SECRET_ACCESS_KEY="…"
 ### Verify
 
 ```bash
-backbeat verify prod-s3 -c backbeat.toml
+backbeatin verify prod-s3 -c backbeat.toml
 ```
 
 ### Schedule (Optional)
@@ -66,7 +66,7 @@ schedule = "0 0 * * * *"  # Every hour
 Run the daemon:
 
 ```bash
-backbeat daemon -c backbeat.toml
+backbeatin daemon -c backbeat.toml
 ```
 
 ## Prerequisites
@@ -79,12 +79,12 @@ backbeat daemon -c backbeat.toml
 
 ### `verify`
 ```bash
-backbeat verify <REPO> [OPTIONS]
+backbeatin verify <REPO> [OPTIONS]
 ```
 
 ### `daemon`
 ```bash
-backbeat daemon [OPTIONS]
+backbeatin daemon [OPTIONS]
 ```
 
 ## How It Works

@@ -1,5 +1,5 @@
 [package]
-name = "backbeat"
+name = "backbeatin"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -10,7 +10,7 @@ keywords = ["backup", "restic", "borg", "verification", "devops"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "backbeat"
+name = "backbeatin"
 path = "src/main.rs"
 
 [dependencies]

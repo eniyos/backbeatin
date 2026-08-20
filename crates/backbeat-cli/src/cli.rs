@@ -12,8 +12,8 @@ use std::path::PathBuf;
 /// ## Quick Start
 ///
 /// 1. Create a configuration file (backbeat.toml)
-/// 2. Run verification: backbeat verify <repo-name>
-/// 3. Start daemon: backbeat daemon
+/// 2. Run verification: backbeatin verify <repo-name>
+/// 3. Start daemon: backbeatin daemon
 ///
 /// ## Example Configuration
 ///
@@ -29,7 +29,7 @@ use std::path::PathBuf;
 /// AWS_SECRET_ACCESS_KEY = "AWS secret key"
 /// ```
 #[derive(Parser, Debug)]
-#[command(name = "backbeat", version, about, long_about = None)]
+#[command(name = "backbeatin", version, about, long_about = None)]
 #[command(author = "eniyos")]
 pub struct Cli {
     #[command(subcommand)]
@@ -47,7 +47,7 @@ pub enum Commands {
     /// ## Example
     ///
     /// ```bash
-    /// backbeat verify prod-backup -c backbeat.toml
+    /// backbeatin verify prod-backup -c backbeat.toml
     /// ```
     ///
     /// ## Exit Codes
@@ -77,7 +77,7 @@ pub enum Commands {
     /// ## Example
     ///
     /// ```bash
-    /// backbeat daemon -c backbeat.toml
+    /// backbeatin daemon -c backbeat.toml
     /// ```
     ///
     /// ## Signals
@@ -102,7 +102,7 @@ pub enum Commands {
     /// ## Example
     ///
     /// ```bash
-    /// backbeat demo -o proof-bundle.json
+    /// backbeatin demo -o proof-bundle.json
     /// ```
     ///
     /// ## Requirements
