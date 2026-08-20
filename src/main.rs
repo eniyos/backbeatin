@@ -1,5 +1,12 @@
 mod cli;
 mod commands;
+mod config;
+mod repo;
+mod sandbox;
+mod sign;
+mod store;
+mod verify;
+mod notify;
 
 use clap::Parser;
 use cli::{Cli, Commands};

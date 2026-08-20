@@ -19,7 +19,7 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use backbeat_core::{Config, Store, ResticBackend, BackupBackend};
+//! use backbeatin::{Config, Store, ResticBackend, BackupBackend};
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Load configuration

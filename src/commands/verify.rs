@@ -23,11 +23,18 @@
 use std::path::Path;
 
 use anyhow::Context;
-use backbeat_core::{
-    compute_manifest, verify_restore, BackendType, BorgBackend, BackupBackend, Config,
-    NewVerificationRun, RepoConfig, ResticBackend, RestoreOutcome, Sandbox, Signer, Store,
-    VerificationStatus,
+use crate::{
+    config::{BackendType, Config, RepoConfig},
+    repo::{BackupBackend, BorgBackend, ResticBackend, RestoreOutcome},
+    sandbox::Sandbox,
+    sign::Signer,
+    store::{Store, NewVerificationRun, unix_now},
+    verify::{compute_manifest, verify_restore, VerificationStatus},
 };
+use crate::sandbox::DEFAULT_IMAGE_RESTIC;
+use crate::sandbox::DEFAULT_IMAGE_BORG;
+use crate::sign::manifest_sha256;
+use crate::sign::run_signing_message;
 
 /// Execute the `verify` subcommand.
 ///
@@ -69,8 +76,8 @@ pub async fn run_verify(
 
 /// Perform the actual restore, verification, and persistence.
 /// Returns the VerificationResult for notification purposes.
-pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<backbeat_core::verify::VerificationResult> {
-    let started_at = backbeat_core::store::unix_now();
+pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<crate::verify::VerificationResult> {
+    let started_at = unix_now();
 
     // --- Step 1: discover latest snapshot ---
     tracing::info!("Looking up latest snapshot for repo '{}'…", config.name);
@@ -105,7 +112,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<b
 
     let (outcome, _restore_stdout) = match config.backend {
         BackendType::Restic => {
-            let sb = sandbox.with_image(backbeat_core::sandbox::DEFAULT_IMAGE_RESTIC);
+            let sb = sandbox.with_image(DEFAULT_IMAGE_RESTIC);
             sb.ensure_image().await?;
             let stdout = sb
                 .run_restic_restore(config, &snapshot_id, tmp_dir.path())
@@ -116,7 +123,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<b
             (outcome, Some(stdout))
         }
         BackendType::Borg => {
-            let sb = sandbox.with_image(backbeat_core::sandbox::DEFAULT_IMAGE_BORG);
+            let sb = sandbox.with_image(DEFAULT_IMAGE_BORG);
             sb.ensure_image().await?;
             let stdout = sb
                 .run_borg_extract(config, &snapshot_id, tmp_dir.path())
@@ -144,7 +151,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<b
         manifest.total_bytes,
     );
 
-    let completed_at = backbeat_core::store::unix_now();
+    let completed_at = unix_now();
 
     // --- Step 4: verify ---
     let result = verify_restore(&outcome, &manifest);
@@ -179,12 +186,12 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<b
             let manifest_hash = run_record
                 .manifest
                 .as_ref()
-                .map(backbeat_core::sign::manifest_sha256)
+                .map(manifest_sha256)
                 .unwrap_or_default();
 
             // Sign the run data (best-effort).
             if let Ok(signer) = Signer::auto_load_or_generate() {
-                if let Ok(msg) = backbeat_core::sign::run_signing_message(
+                if let Ok(msg) = run_signing_message(
                     run_id,
                     &config.name,
                     &snapshot_id,
