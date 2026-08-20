@@ -3,6 +3,11 @@ name = "backbeat-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/eniyos/backbeatin"
+homepage = "https://github.com/eniyos/backbeatin"
+description = "Core library for backup verification"
+keywords = ["backup", "restic", "borg", "verification", "devops"]
+categories = ["development-tools", "data-structures"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
