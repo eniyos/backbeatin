@@ -10,8 +10,17 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 
 ### Install
 
+**Option 1: Cargo**
 ```bash
-cargo install --git https://github.com/eniyos/backbeatin.git
+cargo install backbeat
+```
+
+**Option 2: Binary Download**
+```bash
+# Download from GitHub releases
+wget https://github.com/eniyos/backbeatin/releases/download/v0.1.0/backbeat-linux-x86_64.tar.gz
+tar xzf backbeat-linux-x86_64.tar.gz
+sudo install backbeat /usr/local/bin/
 ```
 
 ### Configure

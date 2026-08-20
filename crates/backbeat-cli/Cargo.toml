@@ -1,8 +1,13 @@
 [package]
-name = "backbeat-cli"
+name = "backbeat"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/eniyos/backbeatin"
+homepage = "https://github.com/eniyos/backbeatin"
+description = "Automatically verify that your Restic and Borg backups can actually be restored"
+keywords = ["backup", "restic", "borg", "verification", "devops"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "backbeat"
