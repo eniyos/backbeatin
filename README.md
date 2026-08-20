@@ -8,6 +8,12 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 
 **Positioning:** A DevOps/platform engineer who already runs `restic` or `borg` via cron against S3/B2/rsync.net/BorgBase, and wants automated proof that restores actually work — without migrating their backup storage anywhere.
 
+## 🚀 Quick Start
+
+**New to Backbeatin?** Start with our [Quick Start Guide](QUICKSTART.md) to get up and running in 5 minutes.
+
+**Experienced user?** Jump to the detailed configuration and usage below.
+
 ## Quickstart
 
 ### 1. Install
