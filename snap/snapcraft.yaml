@@ -19,12 +19,19 @@ parts:
     build-packages:
       - libssl-dev
       - pkg-config
+      - curl
     stage-packages:
       - docker.io
+    override-build: |
+      cd crates/backbeat-cli
+      cargo install --path . --root $SNAPCRAFT_PART_INSTALL
+      mv $SNAPCRAFT_PART_INSTALL/bin/backbeat $SNAPCRAFT_PART_INSTALL/bin/
+      rm -rf $SNAPCRAFT_PART_INSTALL/.cargo
+      rm -rf $SNAPCRAFT_PART_INSTALL/lib
 
 apps:
   backbeat:
-    command: bin/backbeat
+    command: backbeat
     plugs:
       - docker
       - network

@@ -12,38 +12,28 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 
 ### 1. Install
 
-**Easiest: Package Manager Installation**
-
-**macOS (Homebrew):**
+**Recommended: Install from source**
 ```bash
-brew tap eniyos/backbeatin
-brew install backbeatin
-```
-
-**Linux (Snap):**
-```bash
-snap install backbeatin
-```
-
-**Linux (curl one-liner):**
-```bash
-curl -sSL https://raw.githubusercontent.com/eniyos/backbeatin/main/install.sh | bash
-```
-
-**Option A: Install from source (requires Rust)**
-```bash
+git clone https://github.com/eniyos/backbeatin.git
+cd backbeatin
 cargo install --path .
 ```
 
-**Option B: Build from source**
+**Alternative: Build from source**
 ```bash
 git clone https://github.com/eniyos/backbeatin.git
 cd backbeatin
 cargo build --release
+# Binary will be in target/release/backbeat
 ```
 
-**Option C: Download pre-built binary**
+**Download pre-built binary**
 Download the latest release for your platform from the [GitHub releases page](https://github.com/eniyos/backbeatin/releases).
+
+**Package Manager Installation (Coming Soon)**
+- **macOS (Homebrew)**: `brew tap eniyos/backbeatin && brew install backbeatin` (requires tap repository setup)
+- **Linux (Snap)**: `snap install backbeatin` (requires Snap Store submission)
+- **Linux (curl one-liner)**: `curl -sSL https://raw.githubusercontent.com/eniyos/backbeatin/main/install.sh | bash` (available after release)
 
 **Prerequisites:**
 - [Rust](https://rustup.rs/) 1.70+ (if building from source)
