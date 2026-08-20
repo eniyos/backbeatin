@@ -1,3 +1,26 @@
+//! Verification and manifest computation for backup restore validation.
+//!
+//! This module provides the core verification logic that:
+//! - Computes SHA-256 manifests of restored files
+//! - Compares manifests against backend-reported statistics
+//! - Determines verification pass/fail status
+//! - Provides detailed error reporting
+//!
+//! # Verification Process
+//!
+//! 1. **Manifest Computation**: Walk the restored directory tree and compute
+//!    SHA-256 hashes for all regular files
+//! 2. **Backend Comparison**: Compare the computed manifest against statistics
+//!    reported by the backup backend (file count, byte count)
+//! 3. **Status Determination**: Apply verification rules to determine pass/fail
+//!
+//! # Verification Rules
+//!
+//! - Empty restores always fail
+//! - Backend-reported zero file counts fail unless the backend doesn't report counts
+//! - File count mismatches beyond 5% tolerance fail
+//! - Zero-byte files are logged but don't cause failure
+
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
@@ -13,6 +36,9 @@ use crate::repo::RestoreOutcome;
 // ---------------------------------------------------------------------------
 
 /// A single entry in a restore manifest.
+///
+/// Contains the cryptographic hash and metadata for a single file
+/// that was restored during verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestEntry {
     /// Relative path of the file within the restored tree.
@@ -24,7 +50,7 @@ pub struct ManifestEntry {
 }
 
 /// A manifest describing every file under a restored directory tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Manifest {
     /// All entries, indexed by relative path for convenient lookup.
     pub entries: BTreeMap<String, ManifestEntry>,

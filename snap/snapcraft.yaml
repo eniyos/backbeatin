@@ -1,0 +1,31 @@
+name: backbeatin
+base: core20
+version: '0.1.0'
+summary: Automatically verify that your Restic and Borg backups can actually be restored
+description: |
+  Backbeatin is a single-binary Rust tool that automatically and verifiably tests 
+  whether existing Restic and Borg backup repositories can actually be restored. 
+  It performs real restores into ephemeral Docker containers, cryptographically 
+  verifies the results, and provides tamper-evident proof of each verification run.
+
+grade: stable
+confinement: strict
+
+parts:
+  backbeatin:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    build-packages:
+      - libssl-dev
+      - pkg-config
+    stage-packages:
+      - docker.io
+
+apps:
+  backbeat:
+    command: bin/backbeat
+    plugs:
+      - docker
+      - network
+      - home

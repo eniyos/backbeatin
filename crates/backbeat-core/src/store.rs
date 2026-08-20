@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Mutex;
 
 use rusqlite::Connection;
 
@@ -65,14 +66,14 @@ pub fn unix_now() -> i64 {
 /// Uses SQLite via `rusqlite` (bundled) so there is no system dependency.
 /// The store is created from a file path or in-memory (for tests).
 pub struct Store {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl Store {
     /// Open (or create) the database at `path`.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
-        let store = Self { conn };
+        let store = Self { conn: Mutex::new(conn) };
         store.ensure_schema()?;
         Ok(store)
     }
@@ -80,7 +81,7 @@ impl Store {
     /// Create an in-memory database (useful for testing).
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let store = Self { conn };
+        let store = Self { conn: Mutex::new(conn) };
         store.ensure_schema()?;
         Ok(store)
     }
@@ -90,7 +91,8 @@ impl Store {
     // ------------------------------------------------------------------
 
     fn ensure_schema(&self) -> anyhow::Result<()> {
-        self.conn.execute_batch(
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS repos (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 name        TEXT NOT NULL UNIQUE,
@@ -125,7 +127,7 @@ impl Store {
         )?;
 
         // Migration: add signing columns to existing databases.
-        let _ = self.conn.execute_batch(
+        let _ = conn.execute_batch(
             "ALTER TABLE verification_runs ADD COLUMN signature_hex TEXT;
              ALTER TABLE verification_runs ADD COLUMN public_key_hex TEXT;",
         );
@@ -139,9 +141,9 @@ impl Store {
 
     /// Look up a repo by name, creating a row if it doesn't exist.
     pub fn get_or_create_repo(&self, config: &RepoConfig) -> anyhow::Result<i64> {
+        let conn = self.conn.lock().unwrap();
         // Try to find an existing repo row.
-        let existing: Option<i64> = self
-            .conn
+        let existing: Option<i64> = conn
             .query_row(
                 "SELECT id FROM repos WHERE name = ?1",
                 [&config.name],
@@ -151,7 +153,7 @@ impl Store {
 
         if let Some(id) = existing {
             // Optionally update URI / backend if they've changed.
-            self.conn.execute(
+            conn.execute(
                 "UPDATE repos SET backend = ?1, uri = ?2 WHERE id = ?3",
                 rusqlite::params![
                     format!("{:?}", config.backend).to_lowercase(),
@@ -163,7 +165,7 @@ impl Store {
         }
 
         // Insert a new repo row.
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO repos (name, backend, uri) VALUES (?1, ?2, ?3)",
             rusqlite::params![
                 config.name,
@@ -171,31 +173,31 @@ impl Store {
                 config.uri,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(conn.last_insert_rowid())
     }
 
     /// Internal helper: look up a repo by raw name/backend/URI.
     fn get_or_create_repo_raw(&self, name: &str, backend: &str, uri: &str) -> anyhow::Result<i64> {
-        let existing: Option<i64> = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let existing: Option<i64> = conn
             .query_row("SELECT id FROM repos WHERE name = ?1", [name], |row| {
                 row.get(0)
             })
             .ok();
 
         if let Some(id) = existing {
-            self.conn.execute(
+            conn.execute(
                 "UPDATE repos SET backend = ?1, uri = ?2 WHERE id = ?3",
                 rusqlite::params![backend, uri, id],
             )?;
             return Ok(id);
         }
 
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO repos (name, backend, uri) VALUES (?1, ?2, ?3)",
             rusqlite::params![name, backend, uri],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(conn.last_insert_rowid())
     }
 
     // ------------------------------------------------------------------
@@ -221,7 +223,8 @@ impl Store {
             VerificationStatus::Fail => "fail",
         };
 
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT INTO verification_runs
                 (repo_id, snapshot_id, status, files_count, bytes_restored,
                  manifest_json, message, signature_hex, public_key_hex,
@@ -241,7 +244,7 @@ impl Store {
                 run.completed_at,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(conn.last_insert_rowid())
     }
 
     /// Update a verification run with its Ed25519 signature after insertion.
@@ -251,7 +254,8 @@ impl Store {
         signature_hex: &str,
         public_key_hex: &str,
     ) -> anyhow::Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "UPDATE verification_runs
              SET signature_hex = ?1, public_key_hex = ?2
              WHERE id = ?3",
@@ -262,38 +266,42 @@ impl Store {
 
     /// Return the most recent verification runs for a given repo.
     pub fn recent_runs(&self, repo_name: &str, limit: i64) -> anyhow::Result<Vec<VerificationRunRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT r.id, r.repo_id, r.snapshot_id, r.status,
-                    r.files_count, r.bytes_restored, r.message,
-                    r.signature_hex, r.public_key_hex,
-                    r.started_at, r.completed_at, p.name
-             FROM verification_runs r
-             JOIN repos p ON p.id = r.repo_id
-             WHERE p.name = ?1
-             ORDER BY r.completed_at DESC
-             LIMIT ?2",
-        )?;
-
-        let rows = stmt.query_map(rusqlite::params![repo_name, limit], |row| {
-            Ok(VerificationRunRecord {
-                id: row.get(0)?,
-                repo_id: row.get(1)?,
-                snapshot_id: row.get(2)?,
-                status: row.get(3)?,
-                files_count: row.get::<_, i64>(4)? as u64,
-                bytes_restored: row.get::<_, i64>(5)? as u64,
-                message: row.get(6)?,
-                signature_hex: row.get(7)?,
-                public_key_hex: row.get(8)?,
-                started_at: row.get(9)?,
-                completed_at: row.get(10)?,
-                repo_name: row.get(11)?,
-            })
-        })?;
-
         let mut records = Vec::new();
-        for row in rows {
-            records.push(row?);
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT r.id, r.repo_id, r.snapshot_id, r.status,
+                        r.files_count, r.bytes_restored, r.message,
+                        r.signature_hex, r.public_key_hex,
+                        r.started_at, r.completed_at, p.name
+                 FROM verification_runs r
+                 JOIN repos p ON p.id = r.repo_id
+                 WHERE p.name = ?1
+                 ORDER BY r.completed_at DESC
+                 LIMIT ?2",
+            )?;
+
+            let rows = stmt.query_map(rusqlite::params![repo_name, limit], |row| {
+                Ok(VerificationRunRecord {
+                    id: row.get(0)?,
+                    repo_id: row.get(1)?,
+                    snapshot_id: row.get(2)?,
+                    status: row.get(3)?,
+                    files_count: row.get::<_, i64>(4)? as u64,
+                    bytes_restored: row.get::<_, i64>(5)? as u64,
+                    message: row.get(6)?,
+                    signature_hex: row.get(7)?,
+                    public_key_hex: row.get(8)?,
+                    started_at: row.get(9)?,
+                    completed_at: row.get(10)?,
+                    repo_name: row.get(11)?,
+                })
+            })?;
+
+            for row in rows {
+                records.push(row?);
+            }
+            // conn is dropped here when the scope ends
         }
         Ok(records)
     }
@@ -313,8 +321,8 @@ mod tests {
     fn test_create_in_memory_store() {
         let store = Store::open_in_memory().expect("should open in-memory DB");
         // Schema should be created automatically.
-        let count: i64 = store
-            .conn
+        let conn = store.conn.lock().unwrap();
+        let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM repos", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);

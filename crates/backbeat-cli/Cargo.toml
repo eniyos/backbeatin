@@ -21,3 +21,4 @@ serde_json = "1"
 
 [dev-dependencies]
 testcontainers = "0.23"
+backbeat-core = { path = "../backbeat-core" }

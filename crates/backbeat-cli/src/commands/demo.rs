@@ -1,12 +1,14 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 use anyhow::Context;
 
-use backbeat_core::{Config, Store, ResticBackend, BackupBackend, compute_manifest, verify_restore, NewVerificationRun, VerificationStatus, Signer};
+use backbeat_core::{Config, Store, ResticBackend, BackupBackend, RestoreOutcome, compute_manifest, verify_restore, NewVerificationRun, VerificationStatus, Signer};
 
 const MINIO_IMAGE: &str = "minio/minio:latest";
-const RESTIC_IMAGE: &str = "restic/restic:latest";
+/// Fixed password for the synthetic demo repo so the demo is self-contained
+/// (no interactive restic password prompt) and reproducible.
+const DEMO_RESTIC_PASSWORD: &str = "backbeat-demo-password";
 
 /// Run a full demo: create a synthetic repo, run verify against a healthy
 /// snapshot, corrupt the repo, run verify against a corrupted snapshot,
@@ -14,20 +16,21 @@ const RESTIC_IMAGE: &str = "restic/restic:latest";
 pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     tracing::info!("Pulling Docker images…");
     let _ = StdCommand::new("docker").args(["pull", "-q", MINIO_IMAGE]).output();
-    let _ = StdCommand::new("docker").args(["pull", "-q", RESTIC_IMAGE]).output();
 
     // Start MinIO.
     let (port, minio_id) = start_minio();
     tracing::info!("MinIO started on port {}", port);
 
     let tmp = tempfile::tempdir().context("tempdir")?;
+    // Host `restic` reaches MinIO via the published port.
     let repo_url = format!("s3:http://127.0.0.1:{}/backbeat-demo", port);
     let db_path = tmp.path().join("backbeat.db");
     let config_path = tmp.path().join("backbeat.toml");
 
-    // Create config.
+    // Create config. The credential env vars are validated by `Config::load`
+    // against the process environment, so they must be exported when running.
     let config_content = format!(
-        "[[repo]]\nname = \"demo\"\nbackend = \"restic\"\nuri = \"{}\"\n[repo.credential_env_vars]\nAWS_ACCESS_KEY_ID = \"x\"\nAWS_SECRET_ACCESS_KEY = \"x\"\n",
+        "[[repo]]\nname = \"demo\"\nbackend = \"restic\"\nuri = \"{}\"\n[repo.credential_env_vars]\nAWS_ACCESS_KEY_ID = \"x\"\nAWS_SECRET_ACCESS_KEY = \"x\"\nRESTIC_PASSWORD = \"x\"\n",
         repo_url,
     );
     std::fs::write(&config_path, &config_content).context("write config")?;
@@ -37,7 +40,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
 
     // ── Phase 1: Healthy repo ──
     tracing::info!("── Phase 1: Healthy repo ──");
-    run_restic(port, &["init", "--repo", &repo_url])?;
+    run_restic(tmp.path(), &["init", "--repo", &repo_url])?;
 
     let healthy_dir = tmp.path().join("healthy-data");
     std::fs::create_dir_all(&healthy_dir)?;
@@ -45,7 +48,10 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     std::fs::write(healthy_dir.join("config.json"), br#"{"version":1,"env":"production"}"#)?;
     std::fs::write(healthy_dir.join("data.csv"), b"id,name,value\n1,alpha,100\n2,beta,200\n3,gamma,300\n")?;
 
-    run_restic(port, &["backup", "--repo", &repo_url, healthy_dir.to_str().unwrap()])?;
+    // Use a relative source path (cwd = tmp) so restic stores `healthy-data/`
+    // rather than the full absolute path chain, keeping the snapshot small and
+    // the restore landing cleanly under the target directory.
+    run_restic(tmp.path(), &["backup", "--repo", &repo_url, "healthy-data"])?;
     tracing::info!("Healthy backup created");
 
     verify_and_store(&config_path, "demo", &store, &signer).await?;
@@ -56,7 +62,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     let corrupt_dir = tmp.path().join("corrupt-data");
     std::fs::create_dir_all(&corrupt_dir)?;
     std::fs::write(corrupt_dir.join("secrets.txt"), b"Sensitive data")?;
-    run_restic(port, &["backup", "--repo", &repo_url, corrupt_dir.to_str().unwrap()])?;
+    run_restic(tmp.path(), &["backup", "--repo", &repo_url, "corrupt-data"])?;
 
     // Corrupt the repo by deleting the restic index.
     let _ = StdCommand::new("docker")
@@ -108,16 +114,45 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
 
 async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store: &Store, signer: &Option<Signer>) -> anyhow::Result<()> {
     let config = Config::load(config_path)?;
-    let repo_config = config.repos.iter().find(|r| r.name == repo_name).unwrap();
+    let repo_config = config.repos.iter().find(|r| r.name == repo_name)
+        .ok_or_else(|| anyhow::anyhow!("Repo '{}' not found in config", repo_name))?;
 
     let started_at = backbeat_core::store::unix_now();
     let backend = ResticBackend::from_config(repo_config)?;
     let snapshot_id = backend.latest_snapshot_id().await?;
 
+    // Attempt restore — on failure, still record a "fail" run with the error.
     let tmp2 = tempfile::tempdir()?;
-    let outcome = backend.restore_snapshot(&snapshot_id, tmp2.path()).await?;
-    let manifest = compute_manifest(tmp2.path())?;
-    let result = verify_restore(&outcome, &manifest);
+    let (_outcome, manifest_opt, status, message, files_count, bytes_restored) =
+        match backend.restore_snapshot(&snapshot_id, tmp2.path()).await {
+            Ok(oc) => {
+                let files_count = oc.files_count;
+                let bytes_restored = oc.bytes_restored;
+                match compute_manifest(tmp2.path()) {
+                    Ok(mf) => {
+                        let result = verify_restore(&oc, &mf);
+                        (oc, Some(mf), result.status, result.message,
+                         files_count, bytes_restored)
+                    }
+                    Err(e) => {
+                        let msg = format!("Manifest computation failed: {}", e);
+                        tracing::warn!("  {}", msg);
+                        (oc, None, VerificationStatus::Fail, msg,
+                         files_count, bytes_restored)
+                    }
+                }
+            }
+            Err(e) => {
+                let msg = format!("Restore failed: {}", e);
+                tracing::warn!("  {}", msg);
+                (RestoreOutcome {
+                    snapshot_id: snapshot_id.clone(),
+                    files_count: 0,
+                    bytes_restored: 0,
+                    count_is_meaningful: true,
+                }, None, VerificationStatus::Fail, msg, 0u64, 0u64)
+            }
+        };
     let completed_at = backbeat_core::store::unix_now();
 
     let run = NewVerificationRun {
@@ -125,11 +160,11 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
         repo_backend: format!("{:?}", repo_config.backend).to_lowercase(),
         repo_uri: repo_config.uri.clone(),
         snapshot_id: snapshot_id.clone(),
-        status: result.status,
-        files_count: outcome.files_count,
-        bytes_restored: outcome.bytes_restored,
-        message: result.message.clone(),
-        manifest: Some(manifest),
+        status,
+        files_count,
+        bytes_restored,
+        message: message.clone(),
+        manifest: manifest_opt,
         signature_hex: None,
         public_key_hex: None,
         started_at,
@@ -145,8 +180,8 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
             .unwrap_or_default();
         if let Ok(msg) = backbeat_core::sign::run_signing_message(
             run_id, &repo_config.name, &snapshot_id,
-            if matches!(result.status, VerificationStatus::Pass) { "pass" } else { "fail" },
-            outcome.files_count, outcome.bytes_restored, &result.message,
+            if matches!(status, VerificationStatus::Pass) { "pass" } else { "fail" },
+            files_count, bytes_restored, &message,
             &manifest_hash, started_at, completed_at,
         ) {
             let sig = s.sign(&msg);
@@ -155,7 +190,7 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
         }
     }
 
-    tracing::info!("  Verify {}: {:?}", snapshot_id, result.status);
+    tracing::info!("  Verify {}: {:?}", snapshot_id, status);
     Ok(())
 }
 
@@ -177,7 +212,13 @@ fn start_minio() -> (u16, String) {
         .output()
         .unwrap();
     let port_str = String::from_utf8(port_out.stdout).unwrap();
-    let port: u16 = port_str.trim().split(':').nth(1).unwrap().parse().unwrap();
+    // `docker port` may emit multiple bindings (e.g. `0.0.0.0:51832` and
+    // `[::]:51832` on macOS/ipv6). Pick the first line whose trailing
+    // `:`-separated token parses as a port.
+    let port: u16 = port_str
+        .lines()
+        .find_map(|line| line.rsplit(':').next().and_then(|p| p.trim().parse().ok()))
+        .expect("could not parse MinIO host port");
     std::thread::sleep(std::time::Duration::from_secs(2));
     (port, id)
 }
@@ -186,12 +227,17 @@ fn stop_container(id: &str) {
     let _ = StdCommand::new("docker").args(["rm", "-f", id]).output();
 }
 
-fn run_restic(_port: u16, args: &[&str]) -> anyhow::Result<()> {
-    let out = StdCommand::new("docker")
-        .args(["run", "--rm", "--network", "host",
-            "-e", "AWS_ACCESS_KEY_ID=minioadmin",
-            "-e", "AWS_SECRET_ACCESS_KEY=minioadmin",
-            RESTIC_IMAGE])
+/// Run a `restic` command on the host, pointing at MinIO via the published
+/// port. Using the host binary (rather than a dockerised restic) keeps the
+/// demo consistent with `verify_and_store` (which also uses the host `restic`
+/// via `ResticBackend`), and avoids the Docker-for-mac `--network host` and
+/// bind-mount issues.
+fn run_restic(cwd: &Path, args: &[&str]) -> anyhow::Result<()> {
+    let out = StdCommand::new("restic")
+        .current_dir(cwd)
+        .env("AWS_ACCESS_KEY_ID", "minioadmin")
+        .env("AWS_SECRET_ACCESS_KEY", "minioadmin")
+        .env("RESTIC_PASSWORD", DEMO_RESTIC_PASSWORD)
         .args(args)
         .output()?;
     if !out.status.success() {

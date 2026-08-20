@@ -1,3 +1,33 @@
+//! Configuration management for Backbeatin.
+//!
+//! This module handles loading and validating TOML configuration files
+//! that define backup repositories, scheduling, and notification settings.
+//!
+//! # Configuration Structure
+//!
+//! The configuration is divided into:
+//! - **Repositories**: Individual backup repositories to verify
+//! - **Notifications**: Webhook settings for alerts
+//! - **Credentials**: Environment variable mappings (never stored directly)
+//!
+//! # Example Configuration
+//!
+//! ```toml
+//! [[repo]]
+//! name = "prod-s3"
+//! backend = "restic"
+//! uri = "s3:https://s3.us-east-1.amazonaws.com/bucket/prod"
+//! schedule = "0 0 * * * *"  # Hourly
+//!
+//! [repo.credential_env_vars]
+//! AWS_ACCESS_KEY_ID = "AWS access key ID for S3"
+//! AWS_SECRET_ACCESS_KEY = "AWS secret access key for S3"
+//!
+//! [notifications]
+//! webhook_url = "https://hooks.slack.com/services/..."
+//! on_failure_only = true
+//! ```
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -8,6 +38,8 @@ use serde::Deserialize;
 const DEFAULT_SCHEDULE: &str = "0 0 * * * *";
 
 /// The top-level configuration for Backbeatin.
+///
+/// Contains the list of repositories to verify and optional notification settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     /// One or more repositories to periodically verify.

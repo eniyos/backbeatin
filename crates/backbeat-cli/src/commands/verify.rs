@@ -1,3 +1,25 @@
+//! Single-shot verification command implementation.
+//!
+//! This module handles the `backbeat verify` subcommand which performs
+//! a one-time verification of a backup repository.
+//!
+//! # Verification Flow
+//!
+//! 1. **Configuration Loading**: Load and validate the TOML configuration
+//! 2. **Repository Selection**: Find the specified repository configuration
+//! 3. **Snapshot Discovery**: Identify the latest snapshot to verify
+//! 4. **Sandboxed Restore**: Restore the snapshot into an ephemeral Docker container
+//! 5. **Manifest Computation**: Compute SHA-256 hashes of all restored files
+//! 6. **Verification**: Compare manifest against backend-reported statistics
+//! 7. **Persistence**: Store the verification result in SQLite database
+//! 8. **Signing**: Cryptographically sign the verification record
+//! 9. **Reporting**: Print pass/fail status and exit with appropriate code
+//!
+//! # Exit Codes
+//!
+//! - `0`: Verification passed successfully
+//! - `1`: Verification failed or error occurred
+
 use std::path::Path;
 
 use anyhow::Context;
@@ -9,13 +31,14 @@ use backbeat_core::{
 
 /// Execute the `verify` subcommand.
 ///
-/// 1. Load config and open the store (SQLite DB).
-/// 2. Find the `RepoConfig` by `repo_name`.
-/// 3. Create a temp directory and restore the latest snapshot into it.
-/// 4. Compute a manifest of restored files (SHA-256 + size).
-/// 5. Compare the manifest against the backend-reported outcome.
-/// 6. Persist the run to the store.
-/// 7. Print pass/fail and exit with the appropriate code.
+/// Performs a complete verification cycle for a single repository:
+/// 1. Load config and open the store (SQLite DB)
+/// 2. Find the `RepoConfig` by `repo_name`
+/// 3. Create a temp directory and restore the latest snapshot into it
+/// 4. Compute a manifest of restored files (SHA-256 + size)
+/// 5. Compare the manifest against the backend-reported outcome
+/// 6. Persist the run to the store
+/// 7. Print pass/fail and exit with the appropriate code
 pub async fn run_verify(
     config_path: &Path,
     repo_name: &str,
@@ -36,13 +59,17 @@ pub async fn run_verify(
 
     let store = Store::open(db_path).context("Failed to open store database")?;
 
-    run_restore(repo_config, &store).await?;
-
-    Ok(())
+    // We don't need the result here since this is the CLI interface
+    // The result is already logged and printed by run_restore
+    match run_restore(repo_config, &store).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Perform the actual restore, verification, and persistence.
-async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
+/// Returns the VerificationResult for notification purposes.
+pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<backbeat_core::verify::VerificationResult> {
     let started_at = backbeat_core::store::unix_now();
 
     // --- Step 1: discover latest snapshot ---
@@ -189,7 +216,7 @@ async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<()> {
         VerificationStatus::Pass => {
             tracing::info!("✅ VERIFICATION PASSED: {}", result.message);
             println!("{}", result.message);
-            Ok(())
+            Ok(result)
         }
         VerificationStatus::Fail => {
             tracing::error!("❌ VERIFICATION FAILED: {}", result.message);

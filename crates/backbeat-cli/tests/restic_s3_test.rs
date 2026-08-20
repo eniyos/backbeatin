@@ -40,13 +40,13 @@ fn start_minio() -> (u16, String) {
         .expect("docker port");
     let port_str = String::from_utf8(port_output.stdout)
         .expect("port output");
+    // `docker port` may emit multiple bindings (e.g. `0.0.0.0:51832` and
+    // `[::]:51832` on macOS/ipv6). Pick the first line whose trailing
+    // `:`-separated token parses as a port.
     let host_port: u16 = port_str
-        .trim()
-        .split(':')
-        .nth(1)
-        .expect("port number")
-        .parse()
-        .expect("valid port");
+        .lines()
+        .find_map(|line| line.rsplit(':').next().and_then(|p| p.trim().parse().ok()))
+        .expect("could not parse MinIO host port");
 
     std::thread::sleep(Duration::from_secs(2));
     (host_port, container_id)

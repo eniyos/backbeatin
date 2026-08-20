@@ -1,0 +1,59 @@
+name: Homebrew Formula Update
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  update-homebrew:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get release info
+        id: release
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: Download release asset
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          wget https://github.com/eniyos/backbeatin/archive/refs/tags/v${VERSION}.tar.gz -O release.tar.gz
+
+      - name: Calculate SHA256
+        id: sha256
+        run: |
+          SHA256=$(sha256sum release.tar.gz | cut -d' ' -f1)
+          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+          echo "SHA256: ${SHA256}"
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          SHA256="${{ steps.sha256.outputs.sha256 }}"
+          
+          # Update version in formula
+          sed -i "s/url \"https:\/\/github.com\/eniyos\/backbeatin\/archive\/refs\/tags\/v[^\"]*\"/url \"https:\/\/github.com\/eniyos\/backbeatin\/archive\/refs\/tags\/v${VERSION}.tar.gz\"/" homebrew/backbeatin.rb
+          
+          # Update SHA256
+          sed -i "s/sha256 \"[^\"]*\"/sha256 \"${SHA256}\"/" homebrew/backbeatin.rb
+          
+          echo "Updated Homebrew formula to version ${VERSION} with SHA256 ${SHA256}"
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add homebrew/backbeatin.rb
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update Homebrew formula to v${{ steps.release.outputs.version }}"
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main

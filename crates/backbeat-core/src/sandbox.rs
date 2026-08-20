@@ -1,3 +1,29 @@
+//! Docker sandbox management for isolated backup restore operations.
+//!
+//! This module provides secure, ephemeral container execution for backup
+//! verification. It ensures that:
+//!
+//! - Restores happen in isolated environments
+//! - No restored data persists on the host system
+//! - Containers are automatically cleaned up after verification
+//! - Multiple verification runs can't interfere with each other
+//!
+//! # Security Benefits
+//!
+//! - **Isolation**: Restored files never touch the host filesystem
+//! - **Cleanup**: Containers are force-removed after verification
+//! - **Consistency**: Same Docker images across different platforms
+//! - **Sandboxing**: Limited network access and container capabilities
+//!
+//! # Container Lifecycle
+//!
+//! 1. Pull required Docker image (if not already present)
+//! 2. Create ephemeral container with bind mounts
+//! 3. Start container and execute restore command
+//! 4. Capture stdout/stderr from container
+//! 5. Force-remove container (including volumes)
+//! 6. Return captured output for parsing
+
 use std::path::Path;
 
 use anyhow::Context;
@@ -22,6 +48,12 @@ const CONTAINER_OUTPUT_PATH: &str = "/restore-output";
 // ---------------------------------------------------------------------------
 
 /// Manages ephemeral Docker containers for isolated backup restore execution.
+///
+/// Every restore operation happens inside a throwaway container that is
+/// destroyed immediately after verification. This ensures that:
+/// - No restored data persists on the host system
+/// - Multiple verification runs can't interfere with each other
+/// - The verification environment is consistent and isolated
 ///
 /// Every restore runs inside a throwaway container that is destroyed as soon
 /// as the command completes (including its output volume).  No restored file

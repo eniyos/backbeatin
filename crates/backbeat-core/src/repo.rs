@@ -1,3 +1,30 @@
+//! Backup backend abstraction and implementations.
+//!
+//! This module provides a trait-based interface for interacting with different
+//! backup systems (currently Restic and Borg). It handles:
+//!
+//! - Snapshot/archive discovery
+//! - Restore operations
+//! - Repository statistics
+//! - JSON output parsing from CLI tools
+//!
+//! # Design Philosophy
+//!
+//! Backbeatin never reimplements backup repository formats. Instead, it shells
+//! out to the official CLI tools and parses their JSON output. This ensures:
+//! - Compatibility with the actual backup tools
+//! - Automatic support for new features
+//! - Reduced maintenance burden
+//! - Trust in the well-tested CLI implementations
+//!
+//! # Adding New Backends
+//!
+//! To add support for a new backup system:
+//! 1. Implement the `BackupBackend` trait
+//! 2. Add JSON parsing for snapshot discovery output
+//! 3. Add JSON parsing for restore statistics output
+//! 4. Handle credential environment variables appropriately
+
 use std::path::Path;
 use std::process::Stdio;
 
@@ -12,6 +39,9 @@ use crate::config::RepoConfig;
 // ---------------------------------------------------------------------------
 
 /// The outcome of a single restore operation.
+///
+/// Contains statistics reported by the backup backend after a restore operation.
+/// These statistics are compared against the computed manifest during verification.
 #[derive(Debug, Clone)]
 pub struct RestoreOutcome {
     /// The snapshot ID that was restored.

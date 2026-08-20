@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
-use backbeat_core::{Config, Notifier, Store};
+use backbeat_core::{Config, Notifier, Store, verify::{VerificationResult, VerificationStatus, Manifest}};
 
 /// Run the daemon: continuously verify repositories on their configured
 /// schedules.
@@ -40,7 +40,6 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
             let nf = nf.clone();
 
             Box::pin(async move {
-                let rn = rn.clone();
                 tracing::info!("[{}] Starting scheduled verification…", rn);
 
                 // Load config (fresh copy) and find this repo.
@@ -68,14 +67,32 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
                     }
                 };
 
-                // Placeholder — actual verify flow will be wired next.
-                tracing::info!(
-                    "[{}] Verification for {} backend at {} will run here",
-                    rn,
-                    format!("{:?}", repo_config.backend).to_lowercase(),
-                    repo_config.uri,
-                );
-                let _ = (&store, &nf);
+                // Run the actual verification.
+                match super::verify::run_restore(&repo_config, &store).await {
+                    Ok(result) => {
+                        tracing::info!("[{}] Verification passed", rn);
+                        // Send notification on success if configured (rare).
+                        if let Some(ref notifier) = nf {
+                            if let Err(e) = notifier.send(&rn, &result).await {
+                                tracing::warn!("[{}] Failed to send success notification: {}", rn, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("[{}] Verification failed: {}", rn, e);
+                        // Send failure notification with the error message.
+                        if let Some(ref notifier) = nf {
+                            let result = VerificationResult {
+                                status: VerificationStatus::Fail,
+                                message: e.to_string(),
+                                manifest: Manifest::default(),
+                            };
+                            if let Err(notify_err) = notifier.send(&rn, &result).await {
+                                tracing::error!("[{}] Failed to send failure notification: {}", rn, notify_err);
+                            }
+                        }
+                    }
+                }
             })
         })?;
 
@@ -100,4 +117,40 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
     tracing::info!("Received shutdown signal, exiting…");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_daemon_config_parsing() {
+        let tmp = tempdir().expect("Failed to create temp dir");
+        let config_path = tmp.path().join("test.toml");
+        let db_path = tmp.path().join("test.db");
+
+        let config_content = r#"
+[[repo]]
+name = "test-repo"
+backend = "restic"
+uri = "s3:https://s3.us-east-1.amazonaws.com/bucket/test"
+"#;
+
+        fs::write(&config_path, config_content).expect("Failed to write config");
+
+        // Test that the config can be loaded (no credential env vars needed)
+        let config = Config::load(&config_path).expect("Failed to load config");
+        assert_eq!(config.repos.len(), 1);
+        assert_eq!(config.repos[0].name, "test-repo");
+
+        // Test that the store can be opened
+        let store = Store::open(&db_path).expect("Failed to open store");
+        drop(store);
+
+        // Clean up
+        fs::remove_file(&config_path).ok();
+        fs::remove_file(&db_path).ok();
+    }
 }
