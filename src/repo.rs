@@ -104,6 +104,11 @@ impl ResticBackend {
     ///
     /// Credential environment variables are resolved from the process
     /// environment at construction time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any required credential env var is unset
+    /// for `config`, or if the underlying `std::env::var` lookup fails.
     pub fn from_config(config: &RepoConfig) -> anyhow::Result<Self> {
         let env_overrides: Vec<(String, String)> = config
             .credential_env_vars
@@ -165,6 +170,11 @@ impl ResticBackend {
     ///
     /// The output contains repository-level statistics such as the total
     /// number of snapshots.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input is not valid JSON or does not match
+    /// the expected `RepoStats` schema.
     pub fn parse_stats_output(output: &[u8]) -> anyhow::Result<RepoStats> {
         serde_json::from_slice(output).context("Failed to parse restic stats JSON output")
     }
@@ -177,6 +187,12 @@ impl ResticBackend {
     ///
     /// This is `pub` so that callers using a sandbox (Docker) can parse
     /// captured container output into a `RestoreOutcome`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the output is not valid UTF-8, does not
+    /// contain a parseable `summary` line, or is missing required
+    /// `total_files` / `total_bytes` fields.
     pub fn parse_restore_output(
         output: &[u8],
         snapshot_id: &str,
@@ -190,8 +206,14 @@ impl ResticBackend {
         for line in text.lines() {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
                 if val.get("message_type").and_then(|m| m.as_str()) == Some("summary") {
-                    files_count = val.get("total_files").and_then(|v| v.as_u64()).unwrap_or(0);
-                    bytes_restored = val.get("total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                    files_count = val
+                        .get("total_files")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    bytes_restored = val
+                        .get("total_bytes")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
                 }
             }
         }
@@ -273,6 +295,11 @@ pub struct BorgBackend {
 
 impl BorgBackend {
     /// Create a new `BorgBackend` from a [`RepoConfig`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any required credential env var is unset
+    /// for `config`, or if the underlying `std::env::var` lookup fails.
     pub fn from_config(config: &RepoConfig) -> anyhow::Result<Self> {
         let env_overrides: Vec<(String, String)> = config
             .credential_env_vars

@@ -53,12 +53,11 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
                     }
                 };
 
-                let repo_config = match config.repos.iter().find(|r| r.name == rn) {
-                    Some(r) => r.clone(),
-                    None => {
-                        tracing::error!("[{}] Repo not found in config", rn);
-                        return;
-                    }
+                let repo_config = if let Some(r) = config.repos.iter().find(|r| r.name == rn) {
+                    r.clone()
+                } else {
+                    tracing::error!("[{}] Repo not found in config", rn);
+                    return;
                 };
 
                 // Run the actual verification (store is shared via Arc).

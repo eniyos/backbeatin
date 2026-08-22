@@ -62,6 +62,7 @@ pub struct Manifest {
 
 impl Manifest {
     /// Return the list of entries (sorted by path).
+    #[must_use]
     pub fn sorted_entries(&self) -> Vec<&ManifestEntry> {
         self.entries.values().collect()
     }
@@ -94,14 +95,18 @@ pub struct VerificationResult {
 /// relative path, SHA-256 digest, and size of each file.
 ///
 /// Directories and symlinks are recorded in the manifest but skipped for
-/// hashing (only regular files are hashed).  Returns an error if a file
-/// cannot be read.
+/// hashing (only regular files are hashed).
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be walked, a file's metadata
+/// cannot be read, or a file cannot be opened or read.
 pub fn compute_manifest(dir: &Path) -> anyhow::Result<Manifest> {
     let mut entries = BTreeMap::new();
     let mut total_files: u64 = 0;
     let mut total_bytes: u64 = 0;
 
-    for entry in walkdir::WalkDir::new(dir).min_depth(1).into_iter() {
+    for entry in walkdir::WalkDir::new(dir).min_depth(1) {
         let entry = entry.context("Failed to walk restored directory tree")?;
 
         let relative_path = entry
@@ -178,6 +183,7 @@ pub fn compute_manifest(dir: &Path) -> anyhow::Result<Manifest> {
 ///   * The backend reported a non-zero file count (if we found files).
 ///   * The file count from the manifest roughly matches what the backend
 ///     reported (allow a small delta for metadata entries).
+#[must_use]
 pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> VerificationResult {
     let actual_count = manifest.total_files;
 
@@ -199,9 +205,8 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
         return VerificationResult {
             status: VerificationStatus::Fail,
             message: format!(
-                "Backend reported 0 files, but restore produced {} files on disk — \
+                "Backend reported 0 files, but restore produced {actual_count} files on disk — \
                  possible JSON output format change",
-                actual_count,
             ),
             manifest: manifest.clone(),
         };
@@ -212,12 +217,20 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
     // what we discover on disk (e.g. metadata files, directories).
     if backend_count > 0 {
         let diff = backend_count.abs_diff(actual_count);
+        // The u64→f64→u64 casts below are intentional: we only need a
+        // ballpark tolerance (5% of the larger count, rounded up) for
+        // a percentage comparison. Precision loss at large file counts
+        // is acceptable for this check.
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
         let threshold = (backend_count.max(actual_count) as f64 * 0.05).ceil() as u64;
         if diff > threshold.max(1) {
             let msg = format!(
-                "File count mismatch: backend reported {} files, but restore produced {} \
-                 files on disk (difference {} exceeds {} threshold)",
-                backend_count, actual_count, diff, threshold
+                "File count mismatch: backend reported {backend_count} files, but restore produced {actual_count} \
+                 files on disk (difference {diff} exceeds {threshold} threshold)"
             );
             return VerificationResult {
                 status: VerificationStatus::Fail,

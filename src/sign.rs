@@ -23,6 +23,12 @@ impl Signer {
     ///
     /// If the key files do not exist they are created with restricted
     /// permissions (Unix: 0o600).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the home directory cannot be determined, the
+    /// key directory cannot be created, or the key files cannot be read
+    /// or written.
     pub fn auto_load_or_generate() -> anyhow::Result<Self> {
         let key_dir = home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
@@ -32,9 +38,14 @@ impl Signer {
     }
 
     /// Load or generate a signing keypair from `key_dir`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `key_dir` cannot be created, or the key files
+    /// cannot be read or written.
     pub fn load_or_generate(key_dir: &Path) -> anyhow::Result<Self> {
         fs::create_dir_all(key_dir)
-            .with_context(|| format!("Failed to create key directory {:?}", key_dir))?;
+            .with_context(|| format!("Failed to create key directory {}", key_dir.display()))?;
 
         let priv_path = key_dir.join(PRIVATE_KEY_FILE);
         let pub_path = key_dir.join(PUBLIC_KEY_FILE);
@@ -54,6 +65,7 @@ impl Signer {
     }
 
     /// Generate a new random signing keypair.
+    #[must_use]
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng;
         let keypair = ed25519_dalek::SigningKey::generate(&mut rng);
@@ -63,7 +75,7 @@ impl Signer {
     /// Load an existing keypair from `priv_path`.
     fn load(priv_path: &Path) -> anyhow::Result<Self> {
         let priv_bytes = fs::read(priv_path)
-            .with_context(|| format!("Failed to read private key {:?}", priv_path))?;
+            .with_context(|| format!("Failed to read private key {}", priv_path.display()))?;
         let keypair = ed25519_dalek::SigningKey::from_keypair_bytes(
             &priv_bytes
                 .try_into()
@@ -80,7 +92,7 @@ impl Signer {
         // Write private key.
         let priv_bytes = self.keypair.to_keypair_bytes();
         fs::write(priv_path, priv_bytes)
-            .with_context(|| format!("Failed to write private key {:?}", priv_path))?;
+            .with_context(|| format!("Failed to write private key {}", priv_path.display()))?;
 
         // Restrict permissions (best-effort, Unix only).
         #[cfg(unix)]
@@ -93,12 +105,13 @@ impl Signer {
 
         let pub_bytes = self.keypair.verifying_key().to_bytes();
         fs::write(pub_path, pub_bytes)
-            .with_context(|| format!("Failed to write public key {:?}", pub_path))?;
+            .with_context(|| format!("Failed to write public key {}", pub_path.display()))?;
 
         Ok(())
     }
 
     /// Sign `data` and return the hex-encoded signature (128 hex chars).
+    #[must_use]
     pub fn sign(&self, data: &[u8]) -> String {
         use ed25519_dalek::Signer as _;
         let signature = self.keypair.sign(data);
@@ -106,6 +119,7 @@ impl Signer {
     }
 
     /// Return the hex-encoded public key.
+    #[must_use]
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.keypair.verifying_key().to_bytes())
     }
@@ -129,6 +143,11 @@ fn home_dir() -> Option<PathBuf> {
 ///
 /// This produces a deterministic JSON string so the same run always results
 /// in the same signed bytes (assuming the field values are identical).
+///
+/// # Errors
+///
+/// Returns an error if JSON serialization fails (should not happen in
+/// practice with the in-memory types used here).
 #[allow(clippy::too_many_arguments)]
 pub fn run_signing_message(
     run_id: i64,
@@ -178,6 +197,7 @@ pub fn run_signing_message(
 ///
 /// Returns a hex-encoded 64-character string.  If serialization fails
 /// (shouldn't happen in practice), returns an empty string.
+#[must_use]
 pub fn manifest_sha256(manifest: &crate::verify::Manifest) -> String {
     if let Ok(json) = serde_json::to_string(manifest) {
         let mut hasher = Sha256::new();
@@ -189,12 +209,17 @@ pub fn manifest_sha256(manifest: &crate::verify::Manifest) -> String {
 }
 
 /// Parse a hex-encoded Ed25519 public key (64 hex chars → 32 bytes).
+///
+/// # Errors
+///
+/// Returns an error if the input is not valid hex, has the wrong length,
+/// or the bytes do not form a valid Ed25519 verifying key.
 pub fn public_key_from_hex(hex_str: &str) -> anyhow::Result<ed25519_dalek::VerifyingKey> {
     let bytes = hex::decode(hex_str).context("Failed to decode hex public key")?;
     let len = bytes.len();
     let arr: [u8; 32] = bytes
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid public key: expected 32 bytes, got {}", len))?;
+        .map_err(|_| anyhow::anyhow!("Invalid public key: expected 32 bytes, got {len}"))?;
     Ok(ed25519_dalek::VerifyingKey::from_bytes(&arr)?)
 }
 
@@ -202,6 +227,11 @@ pub fn public_key_from_hex(hex_str: &str) -> anyhow::Result<ed25519_dalek::Verif
 ///
 /// Returns `Ok(true)` if the signature is valid, `Ok(false)` if it is
 /// structurally valid but does not match, or `Err` on decode / key errors.
+///
+/// # Errors
+///
+/// Returns an error if the signature is not valid hex, has the wrong
+/// length, or the public key is malformed.
 pub fn verify_signature(
     data: &[u8],
     signature_hex: &str,

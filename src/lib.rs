@@ -12,7 +12,7 @@
 //! - **repo**: Backup backend abstraction (Restic, Borg)
 //! - **sandbox**: Docker container management for isolated restores
 //! - **sign**: Ed25519 cryptographic signing for tamper-evident records
-//! - **store**: SQLite persistence for verification history
+//! - **store**: `SQLite` persistence for verification history
 //! - **verify**: Manifest computation and verification logic
 //! - **notify**: Webhook notification system for alerts
 //!

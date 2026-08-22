@@ -11,7 +11,7 @@
 //! 4. **Sandboxed Restore**: Restore the snapshot into an ephemeral Docker container
 //! 5. **Manifest Computation**: Compute SHA-256 hashes of all restored files
 //! 6. **Verification**: Compare manifest against backend-reported statistics
-//! 7. **Persistence**: Store the verification result in SQLite database
+//! 7. **Persistence**: Store the verification result in `SQLite` database
 //! 8. **Signing**: Cryptographically sign the verification record
 //! 9. **Reporting**: Print pass/fail status and exit with appropriate code
 //!
@@ -36,7 +36,7 @@ use backbeatin::{manifest_sha256, run_signing_message, DEFAULT_IMAGE_BORG, DEFAU
 /// Execute the `verify` subcommand.
 ///
 /// Performs a complete verification cycle for a single repository:
-/// 1. Load config and open the store (SQLite DB)
+/// 1. Load config and open the store (`SQLite` DB)
 /// 2. Find the `RepoConfig` by `repo_name`
 /// 3. Create a temp directory and restore the latest snapshot into it
 /// 4. Compute a manifest of restored files (SHA-256 + size)
@@ -64,7 +64,8 @@ pub async fn run_verify(config_path: &Path, repo_name: &str, db_path: &Path) -> 
 }
 
 /// Perform the actual restore, verification, and persistence.
-/// Returns the VerificationResult for notification purposes.
+/// Returns the `VerificationResult` for notification purposes.
+#[allow(clippy::too_many_lines)]
 pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<VerificationResult> {
     let started_at = unix_now();
 
@@ -99,9 +100,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
         tmp_dir.path(),
     );
 
-    let sandbox = Sandbox::connect()
-        .await
-        .context("Failed to connect to Docker for sandbox restore")?;
+    let sandbox = Sandbox::connect().context("Failed to connect to Docker for sandbox restore")?;
 
     let outcome = match config.backend {
         BackendType::Restic => {

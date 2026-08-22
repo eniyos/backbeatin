@@ -71,7 +71,13 @@ impl Sandbox {
     ///
     /// Defaults to using the restic Docker image; call [`Self::with_image`]
     /// or the backend-specific runners to override.
-    pub async fn connect() -> anyhow::Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no local Docker socket is available. Make sure
+    /// Docker is installed and the current user has permission to access
+    /// the socket.
+    pub fn connect() -> anyhow::Result<Self> {
         let docker = Docker::connect_with_local_defaults()
             .context("Failed to connect to Docker daemon. Is it installed and running?")?;
 
@@ -82,12 +88,17 @@ impl Sandbox {
     }
 
     /// Override the default container image.
+    #[must_use]
     pub fn with_image(mut self, image: &str) -> Self {
         self.image = image.to_string();
         self
     }
 
     /// Ensure the configured image is available locally, pulling it if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the image cannot be pulled from the registry.
     pub async fn ensure_image(&self) -> anyhow::Result<()> {
         let options = CreateImageOptions {
             from_image: self.image.as_str(),
@@ -110,6 +121,11 @@ impl Sandbox {
     ///
     /// Returns the raw stdout bytes from the container (JSON-line output
     /// from `restic restore --json`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the container cannot be started, the restore
+    /// command fails, or the output cannot be read.
     pub async fn run_restic_restore(
         &self,
         config: &crate::config::RepoConfig,
@@ -127,7 +143,7 @@ impl Sandbox {
                         var, config.name
                     )
                 })?;
-                Ok(format!("{}={}", var, val))
+                Ok(format!("{var}={val}"))
             })
             .collect::<anyhow::Result<_>>()?;
 
@@ -164,6 +180,11 @@ impl Sandbox {
     ///
     /// This is the Borg equivalent of [`Self::run_restic_restore`], using the
     /// `borgbackup/borg` image and Borg's `extract` command syntax.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the container cannot be started, the extract
+    /// command fails, or the output cannot be read.
     pub async fn run_borg_extract(
         &self,
         config: &crate::config::RepoConfig,
@@ -181,7 +202,7 @@ impl Sandbox {
                         var, config.name
                     )
                 })?;
-                Ok(format!("{}={}", var, val))
+                Ok(format!("{var}={val}"))
             })
             .collect::<anyhow::Result<_>>()?;
 

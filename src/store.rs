@@ -50,11 +50,13 @@ pub struct NewVerificationRun {
 }
 
 /// Return the current Unix epoch timestamp (seconds).
+#[must_use]
 pub fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs() as i64
+        .as_secs()
+        .cast_signed()
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ pub fn unix_now() -> i64 {
 
 /// Persistent storage for verification history.
 ///
-/// Uses SQLite via `rusqlite` (bundled) so there is no system dependency.
+/// Uses `SQLite` via `rusqlite` (bundled) so there is no system dependency.
 /// The store is created from a file path or in-memory (for tests).
 pub struct Store {
     conn: Mutex<Connection>,
@@ -71,6 +73,11 @@ pub struct Store {
 
 impl Store {
     /// Open (or create) the database at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `SQLite` file cannot be opened or the
+    /// schema cannot be created.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
         let store = Self {
@@ -81,6 +88,11 @@ impl Store {
     }
 
     /// Open an in-memory database (useful for tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the in-memory `SQLite` database cannot be
+    /// created or the schema cannot be initialised.
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         let store = Self {
@@ -95,7 +107,10 @@ impl Store {
     // ------------------------------------------------------------------
 
     fn ensure_schema(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS repos (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,8 +159,15 @@ impl Store {
     // ------------------------------------------------------------------
 
     /// Look up a repo by name, creating a row if it doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query or insert fails.
     pub fn get_or_create_repo(&self, config: &RepoConfig) -> anyhow::Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Try to find an existing repo row.
         let existing: Option<i64> = conn
             .query_row(
@@ -182,7 +204,10 @@ impl Store {
 
     /// Internal helper: look up a repo by raw name/backend/URI.
     fn get_or_create_repo_raw(&self, name: &str, backend: &str, uri: &str) -> anyhow::Result<i64> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let existing: Option<i64> = conn
             .query_row("SELECT id FROM repos WHERE name = ?1", [name], |row| {
                 row.get(0)
@@ -209,6 +234,11 @@ impl Store {
     // ------------------------------------------------------------------
 
     /// Insert a new verification run record and return its row ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying repository row cannot be
+    /// resolved, the manifest cannot be serialized, or the insert fails.
     pub fn insert_verification_run(&self, run: &NewVerificationRun) -> anyhow::Result<i64> {
         let repo_id =
             self.get_or_create_repo_raw(&run.repo_name, &run.repo_backend, &run.repo_uri)?;
@@ -224,7 +254,10 @@ impl Store {
             VerificationStatus::Fail => "fail",
         };
 
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute(
             "INSERT INTO verification_runs
                 (repo_id, snapshot_id, status, files_count, bytes_restored,
@@ -249,13 +282,20 @@ impl Store {
     }
 
     /// Update a verification run with its Ed25519 signature after insertion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database update fails.
     pub fn update_run_signature(
         &self,
         run_id: i64,
         signature_hex: &str,
         public_key_hex: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute(
             "UPDATE verification_runs
              SET signature_hex = ?1, public_key_hex = ?2
@@ -266,6 +306,10 @@ impl Store {
     }
 
     /// Return the most recent verification runs for a given repo.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn recent_runs(
         &self,
         repo_name: &str,
@@ -273,7 +317,10 @@ impl Store {
     ) -> anyhow::Result<Vec<VerificationRunRecord>> {
         let mut records = Vec::new();
         {
-            let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+            let conn = self
+                .conn
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut stmt = conn.prepare(
                 "SELECT r.id, r.repo_id, r.snapshot_id, r.status,
                         r.files_count, r.bytes_restored, r.message,
@@ -292,8 +339,8 @@ impl Store {
                     repo_id: row.get(1)?,
                     snapshot_id: row.get(2)?,
                     status: row.get(3)?,
-                    files_count: row.get::<_, i64>(4)? as u64,
-                    bytes_restored: row.get::<_, i64>(5)? as u64,
+                    files_count: row.get::<_, i64>(4)?.cast_unsigned(),
+                    bytes_restored: row.get::<_, i64>(5)?.cast_unsigned(),
                     message: row.get(6)?,
                     signature_hex: row.get(7)?,
                     public_key_hex: row.get(8)?,

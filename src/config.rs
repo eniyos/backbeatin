@@ -54,6 +54,8 @@ pub struct Config {
 impl Config {
     /// Load configuration from a TOML file at `path`.
     ///
+    /// # Errors
+    ///
     /// Returns an error if the file cannot be read or parsed, or if any
     /// referenced credential environment variables are unset.
     pub fn load(path: &Path) -> anyhow::Result<Self> {

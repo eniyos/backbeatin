@@ -68,7 +68,7 @@ pub enum Commands {
         )]
         config: PathBuf,
 
-        /// Path to the SQLite database for persisting run history
+        /// Path to the `SQLite` database for persisting run history
         #[arg(long, default_value = "backbeat.db", help = "Path to SQLite database")]
         db_path: PathBuf,
     },
@@ -98,7 +98,7 @@ pub enum Commands {
         )]
         config: PathBuf,
 
-        /// Path to the SQLite database for persisting run history
+        /// Path to the `SQLite` database for persisting run history
         #[arg(long, default_value = "backbeat.db", help = "Path to SQLite database")]
         db_path: PathBuf,
     },

@@ -33,15 +33,14 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
 
     let tmp = tempfile::tempdir().context("tempdir")?;
     // Host `restic` reaches MinIO via the published port.
-    let repo_url = format!("s3:http://127.0.0.1:{}/backbeat-demo", port);
+    let repo_url = format!("s3:http://127.0.0.1:{port}/backbeat-demo");
     let db_path = tmp.path().join("backbeat.db");
     let config_path = tmp.path().join("backbeat.toml");
 
     // Create config. The credential env vars are validated by `Config::load`
     // against the process environment, so they must be exported when running.
     let config_content = format!(
-        "[[repo]]\nname = \"demo\"\nbackend = \"restic\"\nuri = \"{}\"\n[repo.credential_env_vars]\nAWS_ACCESS_KEY_ID = \"x\"\nAWS_SECRET_ACCESS_KEY = \"x\"\nRESTIC_PASSWORD = \"x\"\n",
-        repo_url,
+        "[[repo]]\nname = \"demo\"\nbackend = \"restic\"\nuri = \"{repo_url}\"\n[repo.credential_env_vars]\nAWS_ACCESS_KEY_ID = \"x\"\nAWS_SECRET_ACCESS_KEY = \"x\"\nRESTIC_PASSWORD = \"x\"\n",
     );
     std::fs::write(&config_path, &config_content).context("write config")?;
 
@@ -73,7 +72,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     run_restic(tmp.path(), &["backup", "--repo", &repo_url, "healthy-data"])?;
     tracing::info!("Healthy backup created");
 
-    verify_and_store(&config_path, "demo", &store, &signer).await?;
+    verify_and_store(&config_path, "demo", &store, signer.as_ref()).await?;
 
     // ── Phase 2: Corrupted repo ──
     tracing::info!("── Phase 2: Corrupted repo ──");
@@ -95,7 +94,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
         .output();
     tracing::info!("Repo corrupted (index removed)");
 
-    verify_and_store(&config_path, "demo", &store, &signer).await?;
+    verify_and_store(&config_path, "demo", &store, signer.as_ref()).await?;
 
     // ── Export ──
     let records = store.recent_runs("demo", 10)?;
@@ -103,7 +102,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
 
     let public_key_hex = signer
         .as_ref()
-        .map(|s| s.public_key_hex())
+        .map(backbeatin::Signer::public_key_hex)
         .unwrap_or_default();
 
     let bundle = serde_json::json!({
@@ -135,23 +134,24 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     stop_container(&minio_id);
 
     tracing::info!("Demo complete! Bundle written to: {}", output.display());
-    println!("{}", bundle_json);
+    println!("{bundle_json}");
 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn verify_and_store(
     config_path: &std::path::Path,
     repo_name: &str,
     store: &Store,
-    signer: &Option<Signer>,
+    signer: Option<&Signer>,
 ) -> anyhow::Result<()> {
     let config = Config::load(config_path)?;
     let repo_config = config
         .repos
         .iter()
         .find(|r| r.name == repo_name)
-        .ok_or_else(|| anyhow::anyhow!("Repo '{}' not found in config", repo_name))?;
+        .ok_or_else(|| anyhow::anyhow!("Repo '{repo_name}' not found in config"))?;
 
     let started_at = unix_now();
     let backend = ResticBackend::from_config(repo_config)?;
@@ -177,7 +177,7 @@ async fn verify_and_store(
                         )
                     }
                     Err(e) => {
-                        let msg = format!("Manifest computation failed: {}", e);
+                        let msg = format!("Manifest computation failed: {e}");
                         tracing::warn!("  {}", msg);
                         (
                             oc,
@@ -191,7 +191,7 @@ async fn verify_and_store(
                 }
             }
             Err(e) => {
-                let msg = format!("Restore failed: {}", e);
+                let msg = format!("Restore failed: {e}");
                 tracing::warn!("  {}", msg);
                 (
                     RestoreOutcome {
@@ -229,7 +229,7 @@ async fn verify_and_store(
     let run_id = store.insert_verification_run(&run)?;
 
     // Sign the run.
-    if let Some(ref s) = signer {
+    if let Some(s) = signer {
         let manifest_hash = run
             .manifest
             .as_ref()
@@ -313,7 +313,7 @@ fn stop_container(id: &str) {
     let _ = StdCommand::new("docker").args(["rm", "-f", id]).output();
 }
 
-/// Run a `restic` command on the host, pointing at MinIO via the published
+/// Run a `restic` command on the host, pointing at `MinIO` via the published
 /// port. Using the host binary (rather than a dockerised restic) keeps the
 /// demo consistent with `verify_and_store` (which also uses the host `restic`
 /// via `ResticBackend`), and avoids the Docker-for-mac `--network host` and

@@ -16,6 +16,13 @@ impl Notifier {
     /// Returns `None` if notifications are not configured, or `Err` if the
     /// webhook URL fails SSRF validation (e.g. points to localhost or a
     /// private network address).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying `reqwest::Client` cannot be built, which
+    /// only happens if the TLS stack fails to initialise (essentially
+    /// never in practice).
+    #[must_use]
     pub fn from_config(config: &Config) -> Option<Self> {
         config.notifications.as_ref().map(|c| {
             let client = reqwest::Client::builder()
@@ -34,13 +41,18 @@ impl Notifier {
     /// This is a best-effort SSRF guard: it resolves the hostname and rejects
     /// any address that is loopback, private, link-local, or otherwise
     /// non-global.  Open redirects are mitigated by disabling HTTP redirects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL is malformed, uses a non-HTTP scheme,
+    /// has no host, or resolves to a blocked address.
     fn validate_webhook_url(url: &str) -> anyhow::Result<()> {
         let parsed =
-            reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
+            reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid webhook URL: {e}"))?;
 
         let scheme = parsed.scheme();
         if scheme != "https" && scheme != "http" {
-            anyhow::bail!("Webhook URL must use http or https, got '{}'", scheme);
+            anyhow::bail!("Webhook URL must use http or https, got '{scheme}'");
         }
 
         let host = parsed
@@ -49,28 +61,25 @@ impl Notifier {
 
         // Try to resolve the hostname and check every resulting IP.
         let port = parsed.port_or_known_default().unwrap_or(443);
-        let addr_str = format!("{}:{}", host, port);
-        match addr_str.to_socket_addrs() {
-            Ok(addrs) => {
-                for addr in addrs {
-                    Self::check_ip(addr.ip())?;
-                }
+        let addr_str = format!("{host}:{port}");
+        if let Ok(addrs) = addr_str.to_socket_addrs() {
+            for addr in addrs {
+                Self::check_ip(addr.ip())?;
             }
-            Err(_) => {
-                // If DNS resolution fails, do a basic string check for
-                // obvious localhost / private addresses.
-                let lower = host.to_lowercase();
-                if lower == "localhost"
-                    || lower.starts_with("127.")
-                    || lower == "::1"
-                    || lower.starts_with("10.")
-                    || lower.starts_with("192.168.")
-                    || lower.starts_with("169.254.")
-                    || lower == "metadata.google.internal"
-                    || lower.ends_with(".internal")
-                {
-                    anyhow::bail!("Webhook URL must not point to internal addresses");
-                }
+        } else {
+            // If DNS resolution fails, do a basic string check for
+            // obvious localhost / private addresses.
+            let lower = host.to_lowercase();
+            if lower == "localhost"
+                || lower.starts_with("127.")
+                || lower == "::1"
+                || lower.starts_with("10.")
+                || lower.starts_with("192.168.")
+                || lower.starts_with("169.254.")
+                || lower == "metadata.google.internal"
+                || lower.ends_with(".internal")
+            {
+                anyhow::bail!("Webhook URL must not point to internal addresses");
             }
         }
 
@@ -86,7 +95,7 @@ impl Notifier {
             IpAddr::V6(v6) => v6.is_loopback() || !Self::is_global_v6(v6),
         };
         if blocked {
-            anyhow::bail!("Webhook URL resolved to blocked address {}", ip);
+            anyhow::bail!("Webhook URL resolved to blocked address {ip}");
         }
         Ok(())
     }
@@ -134,6 +143,12 @@ impl Notifier {
     /// Send a notification for the given verification result.
     ///
     /// Skips sending if `on_failure_only` is true and the result is a pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the webhook URL fails SSRF validation, the
+    /// request cannot be sent, or the server responds with a non-success
+    /// status code.
     pub async fn send(&self, repo_name: &str, result: &VerificationResult) -> anyhow::Result<()> {
         // Skip pass notifications if configured to only notify on failure.
         if self.config.on_failure_only && result.status == VerificationStatus::Pass {
@@ -166,7 +181,8 @@ impl Notifier {
                 "ts": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_secs() as i64,
+                    .as_secs()
+                    .cast_signed(),
             }]
         });
 
