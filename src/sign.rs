@@ -44,6 +44,11 @@ impl Signer {
         } else {
             let signer = Self::generate();
             signer.save(&priv_path, &pub_path)?;
+            tracing::warn!(
+                "Generated new Ed25519 signing key at {:?}. The private key is stored \
+                 unencrypted on disk (permissions 0o600). Keep this directory secure.",
+                priv_path,
+            );
             Ok(signer)
         }
     }

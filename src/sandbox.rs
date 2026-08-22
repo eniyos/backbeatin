@@ -82,7 +82,6 @@ impl Sandbox {
     }
 
     /// Override the default container image.
-    #[allow(dead_code)]
     pub fn with_image(mut self, image: &str) -> Self {
         self.image = image.to_string();
         self

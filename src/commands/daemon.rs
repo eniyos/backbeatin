@@ -12,13 +12,13 @@ use backbeatin::{config::Config, notify::Notifier, store::Store, verify::{Verifi
 /// Reads the config, creates a cron job per repository, and keeps running
 /// until the process is interrupted (Ctrl+C).
 pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()> {
-    let config = Arc::new(
-        Config::load(config_path).context("Failed to load configuration")?,
-    );
+    let config = Config::load(config_path).context("Failed to load configuration")?;
 
-    // Open the store once so we verify the DB is accessible early.
-    let _store = Store::open(db_path).context("Failed to open store database")?;
-    let db_path = db_path.to_owned();
+    // Open the store once and share it across all cron jobs via Arc.
+    // Store uses internal Mutex<Connection> so it is safe for concurrent access.
+    let store = Arc::new(
+        Store::open(db_path).context("Failed to open store database")?,
+    );
 
     let notifier = Notifier::from_config(&config);
     let config_path = config_path.to_owned();
@@ -30,13 +30,13 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
         let repo_name = repo.name.clone();
         let job_repo_name = repo_name.clone();
         let cp = config_path.clone();
-        let dp = db_path.clone();
+        let st = Arc::clone(&store);
         let nf = notifier.clone();
 
         let job = Job::new_async(cron_expr.as_str(), move |_uuid, _lock| {
             let rn = job_repo_name.clone();
             let cp = cp.clone();
-            let dp = dp.clone();
+            let st = Arc::clone(&st);
             let nf = nf.clone();
 
             Box::pin(async move {
@@ -59,16 +59,8 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
                     }
                 };
 
-                let store = match Store::open(&dp) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::error!("[{}] Failed to open store: {}", rn, e);
-                        return;
-                    }
-                };
-
-                // Run the actual verification.
-                match super::verify::run_restore(&repo_config, &store).await {
+                // Run the actual verification (store is shared via Arc).
+                match super::verify::run_restore(&repo_config, &st).await {
                     Ok(result) => {
                         tracing::info!("[{}] Verification passed", rn);
                         // Send notification on success if configured (rare).
