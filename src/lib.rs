@@ -19,14 +19,15 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
+//! use std::path::Path;
 //! use backbeatin::{Config, Store, ResticBackend, BackupBackend};
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Load configuration
-//! let config = Config::load("backbeat.toml")?;
+//! let config = Config::load(Path::new("backbeat.toml"))?;
 //!
 //! // Open persistence store
-//! let store = Store::open("backbeat.db")?;
+//! let store = Store::open(Path::new("backbeat.db"))?;
 //!
 //! // Initialize backend
 //! let backend = ResticBackend::from_config(&config.repos[0])?;

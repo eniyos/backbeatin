@@ -91,7 +91,7 @@ impl Store {
     // ------------------------------------------------------------------
 
     fn ensure_schema(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS repos (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +141,7 @@ impl Store {
 
     /// Look up a repo by name, creating a row if it doesn't exist.
     pub fn get_or_create_repo(&self, config: &RepoConfig) -> anyhow::Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         // Try to find an existing repo row.
         let existing: Option<i64> = conn
             .query_row(
@@ -178,7 +178,7 @@ impl Store {
 
     /// Internal helper: look up a repo by raw name/backend/URI.
     fn get_or_create_repo_raw(&self, name: &str, backend: &str, uri: &str) -> anyhow::Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let existing: Option<i64> = conn
             .query_row("SELECT id FROM repos WHERE name = ?1", [name], |row| {
                 row.get(0)
@@ -223,7 +223,7 @@ impl Store {
             VerificationStatus::Fail => "fail",
         };
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             "INSERT INTO verification_runs
                 (repo_id, snapshot_id, status, files_count, bytes_restored,
@@ -254,7 +254,7 @@ impl Store {
         signature_hex: &str,
         public_key_hex: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             "UPDATE verification_runs
              SET signature_hex = ?1, public_key_hex = ?2
@@ -268,7 +268,7 @@ impl Store {
     pub fn recent_runs(&self, repo_name: &str, limit: i64) -> anyhow::Result<Vec<VerificationRunRecord>> {
         let mut records = Vec::new();
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
             let mut stmt = conn.prepare(
                 "SELECT r.id, r.repo_id, r.snapshot_id, r.status,
                         r.files_count, r.bytes_restored, r.message,
