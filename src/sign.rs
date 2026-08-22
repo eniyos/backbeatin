@@ -104,64 +104,6 @@ impl Signer {
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.keypair.verifying_key().to_bytes())
     }
-
-    /// Return the raw 32-byte public key.
-    pub fn public_key_bytes(&self) -> [u8; 32] {
-        self.keypair.verifying_key().to_bytes()
-    }
-
-    /// Path to the default public key file.
-    pub fn default_public_key_path() -> anyhow::Result<PathBuf> {
-        let key_dir = home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-            .join(KEY_DIR);
-        Ok(key_dir.join(PUBLIC_KEY_FILE))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Verification helpers
-// ---------------------------------------------------------------------------
-
-/// Parse a hex-encoded Ed25519 public key.
-pub fn public_key_from_hex(hex_str: &str) -> anyhow::Result<ed25519_dalek::VerifyingKey> {
-    let bytes: [u8; 32] = hex::decode(hex_str)
-        .context("Failed to decode hex public key")?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Public key must be exactly 32 bytes (64 hex chars)"))?;
-
-    ed25519_dalek::VerifyingKey::from_bytes(&bytes)
-        .context("Invalid Ed25519 public key")
-}
-
-/// Load a public key from a raw 32-byte file.
-pub fn public_key_from_file(path: &Path) -> anyhow::Result<ed25519_dalek::VerifyingKey> {
-    let bytes = fs::read(path)
-        .with_context(|| format!("Failed to read public key {:?}", path))?;
-
-    let arr: [u8; 32] = bytes.as_slice().try_into()
-        .map_err(|_| anyhow::anyhow!("Public key file must contain exactly 32 bytes"))?;
-
-    ed25519_dalek::VerifyingKey::from_bytes(&arr)
-        .context("Invalid Ed25519 public key file")
-}
-
-/// Verify a hex-encoded signature against `data` and `public_key`.
-pub fn verify_signature(
-    data: &[u8],
-    signature_hex: &str,
-    public_key: &ed25519_dalek::VerifyingKey,
-) -> anyhow::Result<bool> {
-    use ed25519_dalek::Verifier as _;
-
-    let sig_bytes: [u8; 64] = hex::decode(signature_hex)
-        .context("Failed to decode hex signature")?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Signature must be exactly 64 bytes (128 hex chars)"))?;
-
-    let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-
-    Ok(public_key.verify(data, &signature).is_ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +181,38 @@ pub fn manifest_sha256(manifest: &crate::verify::Manifest) -> String {
     } else {
         String::new()
     }
+}
+
+/// Parse a hex-encoded Ed25519 public key (64 hex chars → 32 bytes).
+pub fn public_key_from_hex(hex_str: &str) -> anyhow::Result<ed25519_dalek::VerifyingKey> {
+    let bytes = hex::decode(hex_str)
+        .context("Failed to decode hex public key")?;
+    let len = bytes.len();
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid public key: expected 32 bytes, got {}", len)
+    })?;
+    Ok(ed25519_dalek::VerifyingKey::from_bytes(&arr)?)
+}
+
+/// Verify an Ed25519 signature against a public key and the original data.
+///
+/// Returns `Ok(true)` if the signature is valid, `Ok(false)` if it is
+/// structurally valid but does not match, or `Err` on decode / key errors.
+pub fn verify_signature(
+    data: &[u8],
+    signature_hex: &str,
+    public_key: &ed25519_dalek::VerifyingKey,
+) -> anyhow::Result<bool> {
+    use ed25519_dalek::Verifier;
+
+    let sig_bytes = hex::decode(signature_hex)
+        .context("Failed to decode hex signature")?;
+    let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid signature: expected 64 bytes")
+    })?;
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
+
+    Ok(public_key.verify(data, &signature).is_ok())
 }
 
 // ---------------------------------------------------------------------------

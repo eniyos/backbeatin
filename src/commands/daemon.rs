@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
-use crate::{config::Config, notify::Notifier, store::Store, verify::{VerificationResult, VerificationStatus, Manifest}};
+use backbeatin::{config::Config, notify::Notifier, store::Store, verify::{VerificationResult, VerificationStatus, Manifest}};
 
 /// Run the daemon: continuously verify repositories on their configured
 /// schedules.

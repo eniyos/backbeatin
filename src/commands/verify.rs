@@ -23,18 +23,18 @@
 use std::path::Path;
 
 use anyhow::Context;
-use crate::{
+use backbeatin::{
     config::{BackendType, Config, RepoConfig},
     repo::{BackupBackend, BorgBackend, ResticBackend, RestoreOutcome},
     sandbox::Sandbox,
     sign::Signer,
     store::{Store, NewVerificationRun, unix_now},
-    verify::{compute_manifest, verify_restore, VerificationStatus},
+    verify::{compute_manifest, verify_restore, VerificationResult, VerificationStatus},
 };
-use crate::sandbox::DEFAULT_IMAGE_RESTIC;
-use crate::sandbox::DEFAULT_IMAGE_BORG;
-use crate::sign::manifest_sha256;
-use crate::sign::run_signing_message;
+use backbeatin::DEFAULT_IMAGE_RESTIC;
+use backbeatin::DEFAULT_IMAGE_BORG;
+use backbeatin::manifest_sha256;
+use backbeatin::run_signing_message;
 
 /// Execute the `verify` subcommand.
 ///
@@ -76,7 +76,7 @@ pub async fn run_verify(
 
 /// Perform the actual restore, verification, and persistence.
 /// Returns the VerificationResult for notification purposes.
-pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<crate::verify::VerificationResult> {
+pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<VerificationResult> {
     let started_at = unix_now();
 
     // --- Step 1: discover latest snapshot ---

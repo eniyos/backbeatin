@@ -56,9 +56,12 @@ pub mod verify;
 pub use config::{BackendType, Config, RepoConfig};
 pub use repo::{BackupBackend, BorgBackend, RepoStats, ResticBackend, RestoreOutcome};
 pub use sandbox::Sandbox;
-pub use sign::Signer;
-pub use store::{Store, NewVerificationRun, VerificationRunRecord};
+pub use sign::{Signer, manifest_sha256, run_signing_message};
+pub use store::{Store, NewVerificationRun, VerificationRunRecord, unix_now};
 pub use verify::{compute_manifest, verify_restore, Manifest, ManifestEntry, VerificationResult, VerificationStatus};
 
 pub mod notify;
 pub use notify::Notifier;
+
+// Re-export sandbox image constants used by the CLI commands.
+pub use sandbox::{DEFAULT_IMAGE_BORG, DEFAULT_IMAGE_RESTIC};

@@ -30,6 +30,7 @@ use std::process::Stdio;
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde::Deserialize;
 use tokio::process::Command;
 
 use crate::config::RepoConfig;
@@ -59,13 +60,12 @@ pub struct RestoreOutcome {
     pub count_is_meaningful: bool,
 }
 
-/// Summary statistics about a repository.
-#[derive(Debug, Clone)]
+/// Repository-level statistics reported by `restic stats --json`.
+#[derive(Debug, Clone, Deserialize)]
 pub struct RepoStats {
     /// Total number of snapshots in the repository.
+    #[serde(alias = "total_snapshots")]
     pub snapshot_count: u64,
-    /// The ID of the latest snapshot, if any.
-    pub latest_snapshot: Option<String>,
 }
 
 /// Generic interface that both Restic and Borg backends implement.
@@ -86,9 +86,6 @@ pub trait BackupBackend: Send + Sync {
         snapshot_id: &str,
         target_dir: &Path,
     ) -> anyhow::Result<RestoreOutcome>;
-
-    /// Return summary statistics about the repository.
-    async fn repo_stats(&self) -> anyhow::Result<RepoStats>;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +158,14 @@ impl ResticBackend {
         Ok(short_id.to_string())
     }
 
+    /// Parse the JSON output of `restic stats --json`.
+    ///
+    /// The output contains repository-level statistics such as the total
+    /// number of snapshots.
+    pub fn parse_stats_output(output: &[u8]) -> anyhow::Result<RepoStats> {
+        serde_json::from_slice(output).context("Failed to parse restic stats JSON output")
+    }
+
     /// Parse the JSON output of `restic restore … --json`.
     ///
     /// Restic's JSON restore output prints one JSON-Line per message.
@@ -196,21 +201,6 @@ impl ResticBackend {
             files_count,
             bytes_restored,
             count_is_meaningful: true,
-        })
-    }
-
-    /// Parse the JSON output of `restic stats --json …`.
-    fn parse_stats_output(output: &[u8]) -> anyhow::Result<RepoStats> {
-        let stats: serde_json::Value = serde_json::from_slice(output)
-            .context("Failed to parse restic stats JSON output")?;
-
-        let snapshot_count = stats["total_snapshots"]
-            .as_u64()
-            .unwrap_or_default();
-
-        Ok(RepoStats {
-            snapshot_count,
-            latest_snapshot: None, // stats output doesn't include the latest ID
         })
     }
 }
@@ -268,34 +258,6 @@ impl BackupBackend for ResticBackend {
         }
 
         Self::parse_restore_output(&output.stdout, snapshot_id)
-    }
-
-    async fn repo_stats(&self) -> anyhow::Result<RepoStats> {
-        let mut cmd = self.restic_command();
-        cmd.arg("stats").arg("--json");
-
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to run 'restic stats'")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "restic stats failed (exit {}){}",
-                output.status,
-                if stderr.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", stderr.trim())
-                }
-            );
-        }
-
-        let mut stats = Self::parse_stats_output(&output.stdout)?;
-        // Populate latest_snapshot by calling the snapshots endpoint.
-        stats.latest_snapshot = Some(self.latest_snapshot_id().await?);
-        Ok(stats)
     }
 }
 
@@ -434,44 +396,6 @@ impl BackupBackend for BorgBackend {
             files_count: 0,
             bytes_restored: 0,
             count_is_meaningful: false,
-        })
-    }
-
-    async fn repo_stats(&self) -> anyhow::Result<RepoStats> {
-        let mut cmd = self.borg_command();
-        cmd.arg("list").arg("--json").arg(&self.repo);
-
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to run 'borg list' for stats")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "borg list failed (exit {}){}",
-                output.status,
-                if stderr.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", stderr.trim())
-                }
-            );
-        }
-
-        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse borg list JSON output")?;
-
-        let archives = parsed["archives"].as_array();
-        let snapshot_count = archives.map(|a| a.len() as u64).unwrap_or(0);
-        let latest_snapshot = archives
-            .and_then(|a| a.last())
-            .and_then(|a| a["name"].as_str())
-            .map(|s| s.to_string());
-
-        Ok(RepoStats {
-            snapshot_count,
-            latest_snapshot,
         })
     }
 }

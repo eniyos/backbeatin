@@ -78,7 +78,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Create an in-memory database (useful for testing).
+    /// Open an in-memory database (useful for tests).
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         let store = Self { conn: Mutex::new(conn) };

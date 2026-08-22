@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../${{ matrix.artifact_name }}.tar.gz backbeat
+          tar czf ../../${{ matrix.artifact_name }}.tar.gz backbeatin
           cd ../..
 
       - name: Upload artifact
