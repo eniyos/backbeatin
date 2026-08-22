@@ -172,3 +172,73 @@ impl Notifier {
         Ok(())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reject_localhost() {
+        let err = Notifier::validate_webhook_url("http://localhost/hook").unwrap_err();
+        assert!(err.to_string().contains("internal") || err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_reject_loopback_ip() {
+        let err = Notifier::validate_webhook_url("http://127.0.0.1/hook").unwrap_err();
+        assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_reject_private_10() {
+        let err = Notifier::validate_webhook_url("http://10.0.0.1/hook").unwrap_err();
+        assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_reject_private_192() {
+        let err = Notifier::validate_webhook_url("http://192.168.1.1/hook").unwrap_err();
+        assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_reject_link_local() {
+        let err = Notifier::validate_webhook_url("http://169.254.169.254/metadata").unwrap_err();
+        assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_reject_ftp_scheme() {
+        let err = Notifier::validate_webhook_url("ftp://example.com/hook").unwrap_err();
+        assert!(err.to_string().contains("http or https"));
+    }
+
+    #[test]
+    fn test_reject_invalid_url() {
+        let err = Notifier::validate_webhook_url("not a url").unwrap_err();
+        assert!(err.to_string().contains("Invalid"));
+    }
+
+    #[test]
+    fn test_reject_metadata_domain_fallback() {
+        // When DNS fails, we fall back to string matching
+        let err = Notifier::validate_webhook_url("http://metadata.google.internal/computeMetadata/v1/").unwrap_err();
+        assert!(err.to_string().contains("internal"));
+    }
+
+    #[test]
+    fn test_check_ip_blocks_loopback() {
+        let err = Notifier::check_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap_err();
+        assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_check_ip_blocks_ipv6_loopback() {
+        let err = Notifier::check_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)).unwrap_err();
+        assert!(err.to_string().contains("blocked"));
+    }
+}

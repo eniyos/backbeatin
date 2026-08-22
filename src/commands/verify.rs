@@ -102,7 +102,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
         .await
         .context("Failed to connect to Docker for sandbox restore")?;
 
-    let (outcome, _restore_stdout) = match config.backend {
+    let outcome = match config.backend {
         BackendType::Restic => {
             let sb = sandbox.with_image(DEFAULT_IMAGE_RESTIC);
             sb.ensure_image().await?;
@@ -110,26 +110,24 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
                 .run_restic_restore(config, &snapshot_id, tmp_dir.path())
                 .await
                 .context("Sandbox restic restore failed")?;
-            let outcome = ResticBackend::parse_restore_output(&stdout, &snapshot_id)
-                .context("Failed to parse restic restore JSON output from container")?;
-            (outcome, Some(stdout))
+            ResticBackend::parse_restore_output(&stdout, &snapshot_id)
+                .context("Failed to parse restic restore JSON output from container")?
         }
         BackendType::Borg => {
             let sb = sandbox.with_image(DEFAULT_IMAGE_BORG);
             sb.ensure_image().await?;
-            let stdout = sb
+            let _stdout = sb
                 .run_borg_extract(config, &snapshot_id, tmp_dir.path())
                 .await
                 .context("Sandbox Borg extract failed")?;
             // Borg does not produce JSON output for extract — return zero
             // stats and let the manifest-based verification do the real check.
-            let outcome = RestoreOutcome {
+            RestoreOutcome {
                 snapshot_id: snapshot_id.clone(),
                 files_count: 0,
                 bytes_restored: 0,
                 count_is_meaningful: false,
-            };
-            (outcome, Some(stdout))
+            }
         }
     };
 
@@ -155,7 +153,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
     };
     let run_record = NewVerificationRun {
         repo_name: config.name.clone(),
-        repo_backend: format!("{:?}", config.backend).to_lowercase(),
+        repo_backend: config.backend.to_string(),
         repo_uri: config.uri.clone(),
         snapshot_id: snapshot_id.clone(),
         status: result.status,

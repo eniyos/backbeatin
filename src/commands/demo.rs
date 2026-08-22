@@ -165,7 +165,7 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
 
     let run = NewVerificationRun {
         repo_name: repo_config.name.clone(),
-        repo_backend: format!("{:?}", repo_config.backend).to_lowercase(),
+        repo_backend: repo_config.backend.to_string(),
         repo_uri: repo_config.uri.clone(),
         snapshot_id: snapshot_id.clone(),
         status,
@@ -212,7 +212,12 @@ fn start_minio() -> anyhow::Result<(u16, String)> {
             MINIO_IMAGE, "server", "/data"])
         .output()
         .expect("Docker required");
-    assert!(out.status.success(), "minio start: {}", String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        anyhow::bail!(
+            "Failed to start MinIO container: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
     let id = String::from_utf8(out.stdout)
         .context("docker run returned non-UTF-8 container ID")?
         .trim()

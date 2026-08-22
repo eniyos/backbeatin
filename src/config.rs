@@ -96,6 +96,15 @@ pub enum BackendType {
     Borg,
 }
 
+impl std::fmt::Display for BackendType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Restic => write!(f, "restic"),
+            Self::Borg => write!(f, "borg"),
+        }
+    }
+}
+
 /// Configuration for a single backup repository.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepoConfig {

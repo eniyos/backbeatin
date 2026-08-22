@@ -27,8 +27,7 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
 
     for repo in &config.repos {
         let cron_expr = repo.schedule.clone();
-        let repo_name = repo.name.clone();
-        let job_repo_name = repo_name.clone();
+        let job_repo_name = repo.name.clone();
         let cp = config_path.clone();
         let st = Arc::clone(&store);
         let nf = notifier.clone();
@@ -91,7 +90,7 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
         sched.add(job).await?;
         tracing::info!(
             "[{}] Scheduled: cron='{}'",
-            repo_name,
+            repo.name,
             cron_expr,
         );
     }
