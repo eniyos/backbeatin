@@ -4,7 +4,12 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
-use backbeatin::{config::Config, notify::Notifier, store::Store, verify::{VerificationResult, VerificationStatus, Manifest}};
+use backbeatin::{
+    config::Config,
+    notify::Notifier,
+    store::Store,
+    verify::{Manifest, VerificationResult, VerificationStatus},
+};
 
 /// Run the daemon: continuously verify repositories on their configured
 /// schedules.
@@ -16,9 +21,7 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
 
     // Open the store once and share it across all cron jobs via Arc.
     // Store uses internal Mutex<Connection> so it is safe for concurrent access.
-    let store = Arc::new(
-        Store::open(db_path).context("Failed to open store database")?,
-    );
+    let store = Arc::new(Store::open(db_path).context("Failed to open store database")?);
 
     let notifier = Notifier::from_config(&config);
     let config_path = config_path.to_owned();
@@ -65,7 +68,11 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
                         // Send notification on success if configured (rare).
                         if let Some(ref notifier) = nf {
                             if let Err(e) = notifier.send(&rn, &result).await {
-                                tracing::warn!("[{}] Failed to send success notification: {}", rn, e);
+                                tracing::warn!(
+                                    "[{}] Failed to send success notification: {}",
+                                    rn,
+                                    e
+                                );
                             }
                         }
                     }
@@ -79,7 +86,11 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
                                 manifest: Manifest::default(),
                             };
                             if let Err(notify_err) = notifier.send(&rn, &result).await {
-                                tracing::error!("[{}] Failed to send failure notification: {}", rn, notify_err);
+                                tracing::error!(
+                                    "[{}] Failed to send failure notification: {}",
+                                    rn,
+                                    notify_err
+                                );
                             }
                         }
                     }
@@ -88,11 +99,7 @@ pub async fn run_daemon(config_path: &Path, db_path: &Path) -> anyhow::Result<()
         })?;
 
         sched.add(job).await?;
-        tracing::info!(
-            "[{}] Scheduled: cron='{}'",
-            repo.name,
-            cron_expr,
-        );
+        tracing::info!("[{}] Scheduled: cron='{}'", repo.name, cron_expr,);
     }
 
     tracing::info!(

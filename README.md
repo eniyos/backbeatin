@@ -87,15 +87,88 @@ backbeatin verify <REPO> [OPTIONS]
 backbeatin daemon [OPTIONS]
 ```
 
+### `demo`
+Run a self-contained demo that creates a synthetic Restic repo, verifies it,
+corrupts it, verifies again (fails), and exports a signed proof bundle.
+
+```bash
+backbeatin demo -o proof-bundle.json
+```
+
+Requires Docker. Creates a temporary MinIO instance.
+
 ## How It Works
 
-1. **Snapshot discovery** — Find latest snapshot
-2. **Sandboxed restore** — Restore into Docker container
-3. **Manifest computation** — SHA-256 hash every file
-4. **Verification** — Compare against backend report
-5. **Persistence** — Store in SQLite database
-6. **Signing** — Sign with Ed25519 key
-7. **Notification** — Send webhook on failure
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           backbeatin verify                             │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  1. LOAD CONFIG                                                         │
+│     Parse backbeat.toml → resolve repo URI + credential env vars        │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  2. SNAPSHOT DISCOVERY                                                  │
+│     Restic: `restic snapshots --json` → latest snapshot ID              │
+│     Borg:   `borg list --json`        → latest archive name             │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  3. SANDBOXED RESTORE                                                   │
+│     ┌─────────────────────────────────────────────────────────────┐     │
+│     │  Docker Container (ephemeral, --rm)                         │     │
+│     │  ┌───────────────────────────────────────────────────────┐  │     │
+│     │  │  restic restore <id> --target /restore                │  │     │
+│     │  │  OR                                                   │  │     │
+│     │  │  borg extract <archive>                               │  │     │
+│     │  └───────────────────────────────────────────────────────┘  │     │
+│     │  Mount: read-only bind of repo credentials only             │     │
+│     └─────────────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  4. MANIFEST COMPUTATION                                                │
+│     Walk /restore → SHA-256 every file → build manifest tree            │
+│     Record: file count + total bytes                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  5. VERIFICATION                                                        │
+│     Compare manifest against backend-reported stats                     │
+│     ✓ File count matches                                                │
+│     ✓ Byte count matches                                                │
+│     ✓ Hash tree is internally consistent                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                        ┌───────────┴───────────┐
+                        ▼                       ▼
+                   ┌─────────┐            ┌─────────┐
+                   │  PASS   │            │  FAIL   │
+                   └────┬────┘            └────┬────┘
+                        │                       │
+                        ▼                       ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  6. PERSIST + SIGN + NOTIFY                                             │
+│     SQLite: INSERT verification run (timestamp, hash, status)           │
+│     Ed25519: sign(run_id + repo + snapshot + manifest_hash + timestamps)│
+│     Webhook: POST to Slack/Discord/etc. on failure                      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Security Model
+
+- **Read-only**: Backup repositories are never written to
+- **Ephemeral**: Docker containers are destroyed after each restore (`--rm`)
+- **Isolated**: No network access during restore, credentials mounted read-only
+- **Signed**: Every verification run is cryptographically signed with Ed25519
+- **Auditable**: All runs persisted to local SQLite with full provenance chain
 
 ## Configuration
 

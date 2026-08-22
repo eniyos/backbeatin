@@ -110,7 +110,10 @@ impl ResticBackend {
             .keys()
             .map(|var| {
                 let val = std::env::var(var).with_context(|| {
-                    format!("Required env var '{}' is not set for repo '{}'", var, config.name)
+                    format!(
+                        "Required env var '{}' is not set for repo '{}'",
+                        var, config.name
+                    )
                 })?;
                 Ok((var.clone(), val))
             })
@@ -174,7 +177,10 @@ impl ResticBackend {
     ///
     /// This is `pub` so that callers using a sandbox (Docker) can parse
     /// captured container output into a `RestoreOutcome`.
-    pub fn parse_restore_output(output: &[u8], snapshot_id: &str) -> anyhow::Result<RestoreOutcome> {
+    pub fn parse_restore_output(
+        output: &[u8],
+        snapshot_id: &str,
+    ) -> anyhow::Result<RestoreOutcome> {
         let text =
             String::from_utf8(output.to_vec()).context("restic restore output was not UTF-8")?;
 
@@ -184,14 +190,8 @@ impl ResticBackend {
         for line in text.lines() {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
                 if val.get("message_type").and_then(|m| m.as_str()) == Some("summary") {
-                    files_count = val
-                        .get("total_files")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    bytes_restored = val
-                        .get("total_bytes")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    files_count = val.get("total_files").and_then(|v| v.as_u64()).unwrap_or(0);
+                    bytes_restored = val.get("total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
                 }
             }
         }
@@ -279,7 +279,10 @@ impl BorgBackend {
             .keys()
             .map(|var| {
                 let val = std::env::var(var).with_context(|| {
-                    format!("Required env var '{}' is not set for repo '{}'", var, config.name)
+                    format!(
+                        "Required env var '{}' is not set for repo '{}'",
+                        var, config.name
+                    )
                 })?;
                 Ok((var.clone(), val))
             })
@@ -312,8 +315,8 @@ impl BorgBackend {
     /// ```
     /// Archives are listed in chronological order; the last entry is the latest.
     fn parse_latest_archive(output: &[u8]) -> anyhow::Result<String> {
-        let parsed: serde_json::Value = serde_json::from_slice(output)
-            .context("Failed to parse borg list JSON output")?;
+        let parsed: serde_json::Value =
+            serde_json::from_slice(output).context("Failed to parse borg list JSON output")?;
 
         let archives = parsed["archives"]
             .as_array()
@@ -371,10 +374,7 @@ impl BackupBackend for BorgBackend {
             .arg(target_dir)
             .arg(&archive_ref);
 
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to run 'borg extract'")?;
+        let output = cmd.output().await.context("Failed to run 'borg extract'")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

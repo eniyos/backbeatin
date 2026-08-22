@@ -245,7 +245,10 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
         format!(
             "Restore verified successfully: {} files, {} bytes restored from snapshot {} \
              ({} zero-byte files found)",
-            actual_count, manifest.total_bytes, outcome.snapshot_id, zero_byte_files.len()
+            actual_count,
+            manifest.total_bytes,
+            outcome.snapshot_id,
+            zero_byte_files.len()
         )
     };
 

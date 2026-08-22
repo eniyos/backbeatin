@@ -28,10 +28,10 @@ use backbeatin::{
     repo::{BackupBackend, BorgBackend, ResticBackend, RestoreOutcome},
     sandbox::Sandbox,
     sign::Signer,
-    store::{Store, NewVerificationRun, unix_now},
+    store::{unix_now, NewVerificationRun, Store},
     verify::{compute_manifest, verify_restore, VerificationResult, VerificationStatus},
 };
-use backbeatin::{DEFAULT_IMAGE_RESTIC, DEFAULT_IMAGE_BORG, manifest_sha256, run_signing_message};
+use backbeatin::{manifest_sha256, run_signing_message, DEFAULT_IMAGE_BORG, DEFAULT_IMAGE_RESTIC};
 
 /// Execute the `verify` subcommand.
 ///
@@ -43,23 +43,20 @@ use backbeatin::{DEFAULT_IMAGE_RESTIC, DEFAULT_IMAGE_BORG, manifest_sha256, run_
 /// 5. Compare the manifest against the backend-reported outcome
 /// 6. Persist the run to the store
 /// 7. Print pass/fail and exit with the appropriate code
-pub async fn run_verify(
-    config_path: &Path,
-    repo_name: &str,
-    db_path: &Path,
-) -> anyhow::Result<()> {
-    let config = Config::load(config_path)
-        .context("Failed to load configuration")?;
+pub async fn run_verify(config_path: &Path, repo_name: &str, db_path: &Path) -> anyhow::Result<()> {
+    let config = Config::load(config_path).context("Failed to load configuration")?;
 
     let repo_config = config
         .repos
         .iter()
         .find(|r| r.name == repo_name)
-        .ok_or_else(|| anyhow::anyhow!(
-            "Repository '{}' not found in config file '{}'",
-            repo_name,
-            config_path.display()
-        ))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Repository '{}' not found in config file '{}'",
+                repo_name,
+                config_path.display()
+            )
+        })?;
 
     let store = Store::open(db_path).context("Failed to open store database")?;
 
@@ -78,13 +75,17 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
         BackendType::Restic => {
             let backend = ResticBackend::from_config(config)
                 .context("Failed to initialise Restic backend from config")?;
-            backend.latest_snapshot_id().await
+            backend
+                .latest_snapshot_id()
+                .await
                 .context("Failed to discover latest snapshot ID")?
         }
         BackendType::Borg => {
             let backend = BorgBackend::from_config(config)
                 .context("Failed to initialise Borg backend from config")?;
-            backend.latest_snapshot_id().await
+            backend
+                .latest_snapshot_id()
+                .await
                 .context("Failed to discover latest Borg archive name")?
         }
     };

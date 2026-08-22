@@ -18,7 +18,11 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Verify { repo, config, db_path } => {
+        Commands::Verify {
+            repo,
+            config,
+            db_path,
+        } => {
             commands::verify::run_verify(&config, &repo, &db_path).await?;
         }
         Commands::Daemon { config, db_path } => {

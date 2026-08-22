@@ -73,7 +73,9 @@ impl Store {
     /// Open (or create) the database at `path`.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
-        let store = Self { conn: Mutex::new(conn) };
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
         store.ensure_schema()?;
         Ok(store)
     }
@@ -81,7 +83,9 @@ impl Store {
     /// Open an in-memory database (useful for tests).
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let store = Self { conn: Mutex::new(conn) };
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
         store.ensure_schema()?;
         Ok(store)
     }
@@ -206,11 +210,8 @@ impl Store {
 
     /// Insert a new verification run record and return its row ID.
     pub fn insert_verification_run(&self, run: &NewVerificationRun) -> anyhow::Result<i64> {
-        let repo_id = self.get_or_create_repo_raw(
-            &run.repo_name,
-            &run.repo_backend,
-            &run.repo_uri,
-        )?;
+        let repo_id =
+            self.get_or_create_repo_raw(&run.repo_name, &run.repo_backend, &run.repo_uri)?;
 
         let manifest_json = run
             .manifest
@@ -265,7 +266,11 @@ impl Store {
     }
 
     /// Return the most recent verification runs for a given repo.
-    pub fn recent_runs(&self, repo_name: &str, limit: i64) -> anyhow::Result<Vec<VerificationRunRecord>> {
+    pub fn recent_runs(
+        &self,
+        repo_name: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<VerificationRunRecord>> {
         let mut records = Vec::new();
         {
             let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
@@ -314,8 +319,8 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use crate::verify::VerificationStatus;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_create_in_memory_store() {

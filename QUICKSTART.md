@@ -18,7 +18,7 @@ cargo install --path .
 git clone https://github.com/eniyos/backbeatin.git
 cd backbeatin
 cargo build --release
-sudo install target/release/backbeat /usr/local/bin/
+sudo install target/release/backbeatin /usr/local/bin/
 ```
 
 ## Prerequisites
@@ -63,7 +63,7 @@ export AWS_SECRET_ACCESS_KEY="your-secret"
 ### 3. Run Verification
 
 ```bash
-backbeat verify my-backup -c backbeat.toml
+backbeatin verify my-backup -c backbeat.toml
 ```
 
 If successful, you'll see:
@@ -90,7 +90,7 @@ AWS_SECRET_ACCESS_KEY = "Your AWS secret key"
 Run the daemon:
 
 ```bash
-backbeat daemon -c backbeat.toml
+backbeatin daemon -c backbeat.toml
 ```
 
 ## Troubleshooting
@@ -117,7 +117,6 @@ newgrp docker
 ## Next Steps
 
 - Read the full [README.md](README.md) for detailed configuration
-- Check [packaging/README.md](packaging/README.md) for installation options
 - See [CHANGELOG.md](CHANGELOG.md) for release notes
 - Open an issue on GitHub if you encounter problems
 

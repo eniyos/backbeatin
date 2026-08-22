@@ -60,7 +60,12 @@ pub enum Commands {
         repo: String,
 
         /// Path to the TOML configuration file
-        #[arg(short, long, default_value = "backbeat.toml", help = "Path to configuration file")]
+        #[arg(
+            short,
+            long,
+            default_value = "backbeat.toml",
+            help = "Path to configuration file"
+        )]
         config: PathBuf,
 
         /// Path to the SQLite database for persisting run history
@@ -85,7 +90,12 @@ pub enum Commands {
     /// - Ctrl+C: Gracefully shutdown
     Daemon {
         /// Path to the TOML configuration file
-        #[arg(short, long, default_value = "backbeat.toml", help = "Path to configuration file")]
+        #[arg(
+            short,
+            long,
+            default_value = "backbeat.toml",
+            help = "Path to configuration file"
+        )]
         config: PathBuf,
 
         /// Path to the SQLite database for persisting run history
@@ -111,7 +121,12 @@ pub enum Commands {
     /// - Requires the restic Docker image
     Demo {
         /// Output path for the proof bundle JSON
-        #[arg(short, long, default_value = "demo-proof-bundle.json", help = "Output file for proof bundle")]
+        #[arg(
+            short,
+            long,
+            default_value = "demo-proof-bundle.json",
+            help = "Output file for proof bundle"
+        )]
         output: PathBuf,
     },
 }

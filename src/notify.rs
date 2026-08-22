@@ -22,7 +22,10 @@ impl Notifier {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("failed to build HTTP client");
-            Self { config: c.clone(), client }
+            Self {
+                config: c.clone(),
+                client,
+            }
         })
     }
 
@@ -32,15 +35,16 @@ impl Notifier {
     /// any address that is loopback, private, link-local, or otherwise
     /// non-global.  Open redirects are mitigated by disabling HTTP redirects.
     fn validate_webhook_url(url: &str) -> anyhow::Result<()> {
-        let parsed = reqwest::Url::parse(url)
-            .map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
+        let parsed =
+            reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
 
         let scheme = parsed.scheme();
         if scheme != "https" && scheme != "http" {
             anyhow::bail!("Webhook URL must use http or https, got '{}'", scheme);
         }
 
-        let host = parsed.host_str()
+        let host = parsed
+            .host_str()
             .ok_or_else(|| anyhow::anyhow!("Webhook URL has no host"))?;
 
         // Try to resolve the hostname and check every resulting IP.
@@ -77,10 +81,7 @@ impl Notifier {
     fn check_ip(ip: IpAddr) -> anyhow::Result<()> {
         let blocked = match ip {
             IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || !Self::is_global_v4(v4)
+                v4.is_loopback() || v4.is_private() || v4.is_link_local() || !Self::is_global_v4(v4)
             }
             IpAddr::V6(v6) => v6.is_loopback() || !Self::is_global_v6(v6),
         };
@@ -95,11 +96,21 @@ impl Notifier {
         // 0.0.0.0/8, 100.64.0.0/10 (CGNAT), 192.0.0.0/24, 198.18.0.0/15
         // (benchmarking), 224.0.0.0/4 (multicast), 240.0.0.0/4 (reserved)
         let o = ip.octets();
-        if o[0] == 0 { return false; }
-        if o[0] == 100 && (o[1] & 0xC0) == 64 { return false; }
-        if o[0] == 192 && o[1] == 0 && o[2] == 0 { return false; }
-        if o[0] == 198 && (o[1] == 18 || o[1] == 19) { return false; }
-        if o[0] >= 224 { return false; }
+        if o[0] == 0 {
+            return false;
+        }
+        if o[0] == 100 && (o[1] & 0xC0) == 64 {
+            return false;
+        }
+        if o[0] == 192 && o[1] == 0 && o[2] == 0 {
+            return false;
+        }
+        if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
+            return false;
+        }
+        if o[0] >= 224 {
+            return false;
+        }
         true
     }
 
@@ -108,20 +119,22 @@ impl Notifier {
         // Block unique-local (fc00::/7), link-local (fe80::/10), and
         // multicast (ff00::/8).
         let seg = ip.segments();
-        if (seg[0] & 0xfe00) == 0xfc00 { return false; }
-        if (seg[0] & 0xffc0) == 0xfe80 { return false; }
-        if (seg[0] & 0xff00) == 0xff00 { return false; }
+        if (seg[0] & 0xfe00) == 0xfc00 {
+            return false;
+        }
+        if (seg[0] & 0xffc0) == 0xfe80 {
+            return false;
+        }
+        if (seg[0] & 0xff00) == 0xff00 {
+            return false;
+        }
         true
     }
 
     /// Send a notification for the given verification result.
     ///
     /// Skips sending if `on_failure_only` is true and the result is a pass.
-    pub async fn send(
-        &self,
-        repo_name: &str,
-        result: &VerificationResult,
-    ) -> anyhow::Result<()> {
+    pub async fn send(&self, repo_name: &str, result: &VerificationResult) -> anyhow::Result<()> {
         // Skip pass notifications if configured to only notify on failure.
         if self.config.on_failure_only && result.status == VerificationStatus::Pass {
             return Ok(());
@@ -157,7 +170,8 @@ impl Notifier {
             }]
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.config.webhook_url)
             .json(&payload)
             .send()
@@ -226,7 +240,9 @@ mod tests {
     #[test]
     fn test_reject_metadata_domain_fallback() {
         // When DNS fails, we fall back to string matching
-        let err = Notifier::validate_webhook_url("http://metadata.google.internal/computeMetadata/v1/").unwrap_err();
+        let err =
+            Notifier::validate_webhook_url("http://metadata.google.internal/computeMetadata/v1/")
+                .unwrap_err();
         assert!(err.to_string().contains("internal"));
     }
 

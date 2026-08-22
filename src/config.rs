@@ -60,8 +60,9 @@ impl Config {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e))?;
 
-        let config: Config = toml::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
+        let config: Config = toml::from_str(&contents).map_err(|e| {
+            anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e)
+        })?;
 
         // Validate that all credential env vars are set.
         for repo in &config.repos {
@@ -201,7 +202,9 @@ on_failure_only = true
         let config: Config = toml::from_str(toml_str).expect("should parse");
         assert_eq!(config.repos.len(), 2);
         assert_eq!(config.repos[1].uri, "b2:mybucket:/path");
-        let notif = config.notifications.expect("notifications should be present");
+        let notif = config
+            .notifications
+            .expect("notifications should be present");
         assert_eq!(notif.webhook_url, "https://hooks.slack.com/xxx");
         assert!(notif.on_failure_only);
     }
@@ -246,7 +249,9 @@ BORG_PASSPHRASE = "repo passphrase"
             _ => panic!("expected Borg backend"),
         }
         assert_eq!(config.repos[0].uri, "ssh://user@host:./repo");
-        assert!(config.repos[0].credential_env_vars.contains_key("BORG_PASSPHRASE"));
+        assert!(config.repos[0]
+            .credential_env_vars
+            .contains_key("BORG_PASSPHRASE"));
     }
 
     #[test]

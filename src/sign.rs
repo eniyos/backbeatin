@@ -65,9 +65,9 @@ impl Signer {
         let priv_bytes = fs::read(priv_path)
             .with_context(|| format!("Failed to read private key {:?}", priv_path))?;
         let keypair = ed25519_dalek::SigningKey::from_keypair_bytes(
-            &priv_bytes.try_into().map_err(|_| {
-                anyhow::anyhow!("Invalid private key file (expected 64 bytes)")
-            })?,
+            &priv_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid private key file (expected 64 bytes)"))?,
         )?;
 
         Ok(Self { keypair })
@@ -190,12 +190,11 @@ pub fn manifest_sha256(manifest: &crate::verify::Manifest) -> String {
 
 /// Parse a hex-encoded Ed25519 public key (64 hex chars → 32 bytes).
 pub fn public_key_from_hex(hex_str: &str) -> anyhow::Result<ed25519_dalek::VerifyingKey> {
-    let bytes = hex::decode(hex_str)
-        .context("Failed to decode hex public key")?;
+    let bytes = hex::decode(hex_str).context("Failed to decode hex public key")?;
     let len = bytes.len();
-    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
-        anyhow::anyhow!("Invalid public key: expected 32 bytes, got {}", len)
-    })?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid public key: expected 32 bytes, got {}", len))?;
     Ok(ed25519_dalek::VerifyingKey::from_bytes(&arr)?)
 }
 
@@ -210,11 +209,10 @@ pub fn verify_signature(
 ) -> anyhow::Result<bool> {
     use ed25519_dalek::Verifier;
 
-    let sig_bytes = hex::decode(signature_hex)
-        .context("Failed to decode hex signature")?;
-    let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| {
-        anyhow::anyhow!("Invalid signature: expected 64 bytes")
-    })?;
+    let sig_bytes = hex::decode(signature_hex).context("Failed to decode hex signature")?;
+    let sig_arr: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid signature: expected 64 bytes"))?;
     let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
 
     Ok(public_key.verify(data, &signature).is_ok())
@@ -249,10 +247,14 @@ mod tests {
 
     #[test]
     fn test_run_signing_message_deterministic() {
-        let msg1 = run_signing_message(1, "repo", "snap", "pass", 100, 5000, "ok", "abc123", 1000, 1001)
-            .expect("should serialize");
-        let msg2 = run_signing_message(1, "repo", "snap", "pass", 100, 5000, "ok", "abc123", 1000, 1001)
-            .expect("should serialize");
+        let msg1 = run_signing_message(
+            1, "repo", "snap", "pass", 100, 5000, "ok", "abc123", 1000, 1001,
+        )
+        .expect("should serialize");
+        let msg2 = run_signing_message(
+            1, "repo", "snap", "pass", 100, 5000, "ok", "abc123", 1000, 1001,
+        )
+        .expect("should serialize");
         assert_eq!(msg1, msg2);
     }
 

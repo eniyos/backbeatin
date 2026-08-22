@@ -5,12 +5,12 @@ use anyhow::Context;
 
 use backbeatin::{
     config::Config,
-    store::{Store, unix_now},
-    repo::{ResticBackend, BackupBackend, RestoreOutcome},
-    verify::{compute_manifest, verify_restore},
+    repo::{BackupBackend, ResticBackend, RestoreOutcome},
+    sign::{manifest_sha256, run_signing_message, Signer},
     store::NewVerificationRun,
+    store::{unix_now, Store},
     verify::VerificationStatus,
-    sign::{Signer, manifest_sha256, run_signing_message}
+    verify::{compute_manifest, verify_restore},
 };
 
 const MINIO_IMAGE: &str = "minio/minio:latest";
@@ -23,7 +23,9 @@ const DEMO_RESTIC_PASSWORD: &str = "backbeat-demo-password";
 /// then export the signed proof bundle.
 pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     tracing::info!("Pulling Docker images…");
-    let _ = StdCommand::new("docker").args(["pull", "-q", MINIO_IMAGE]).output();
+    let _ = StdCommand::new("docker")
+        .args(["pull", "-q", MINIO_IMAGE])
+        .output();
 
     // Start MinIO.
     let (port, minio_id) = start_minio()?;
@@ -52,9 +54,18 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
 
     let healthy_dir = tmp.path().join("healthy-data");
     std::fs::create_dir_all(&healthy_dir)?;
-    std::fs::write(healthy_dir.join("readme.txt"), b"Backbeatin demo: this is a healthy backup.\n")?;
-    std::fs::write(healthy_dir.join("config.json"), br#"{"version":1,"env":"production"}"#)?;
-    std::fs::write(healthy_dir.join("data.csv"), b"id,name,value\n1,alpha,100\n2,beta,200\n3,gamma,300\n")?;
+    std::fs::write(
+        healthy_dir.join("readme.txt"),
+        b"Backbeatin demo: this is a healthy backup.\n",
+    )?;
+    std::fs::write(
+        healthy_dir.join("config.json"),
+        br#"{"version":1,"env":"production"}"#,
+    )?;
+    std::fs::write(
+        healthy_dir.join("data.csv"),
+        b"id,name,value\n1,alpha,100\n2,beta,200\n3,gamma,300\n",
+    )?;
 
     // Use a relative source path (cwd = tmp) so restic stores `healthy-data/`
     // rather than the full absolute path chain, keeping the snapshot small and
@@ -74,7 +85,13 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
 
     // Corrupt the repo by deleting the restic index.
     let _ = StdCommand::new("docker")
-        .args(["exec", &minio_id, "sh", "-c", "rm -rf /data/backbeat-demo/index"])
+        .args([
+            "exec",
+            &minio_id,
+            "sh",
+            "-c",
+            "rm -rf /data/backbeat-demo/index",
+        ])
         .output();
     tracing::info!("Repo corrupted (index removed)");
 
@@ -84,7 +101,10 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     let records = store.recent_runs("demo", 10)?;
     tracing::info!("Exporting {} runs…", records.len());
 
-    let public_key_hex = signer.as_ref().map(|s| s.public_key_hex()).unwrap_or_default();
+    let public_key_hex = signer
+        .as_ref()
+        .map(|s| s.public_key_hex())
+        .unwrap_or_default();
 
     let bundle = serde_json::json!({
         "version": 1,
@@ -120,9 +140,17 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store: &Store, signer: &Option<Signer>) -> anyhow::Result<()> {
+async fn verify_and_store(
+    config_path: &std::path::Path,
+    repo_name: &str,
+    store: &Store,
+    signer: &Option<Signer>,
+) -> anyhow::Result<()> {
     let config = Config::load(config_path)?;
-    let repo_config = config.repos.iter().find(|r| r.name == repo_name)
+    let repo_config = config
+        .repos
+        .iter()
+        .find(|r| r.name == repo_name)
         .ok_or_else(|| anyhow::anyhow!("Repo '{}' not found in config", repo_name))?;
 
     let started_at = unix_now();
@@ -139,26 +167,45 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
                 match compute_manifest(tmp2.path()) {
                     Ok(mf) => {
                         let result = verify_restore(&oc, &mf);
-                        (oc, Some(mf), result.status, result.message,
-                         files_count, bytes_restored)
+                        (
+                            oc,
+                            Some(mf),
+                            result.status,
+                            result.message,
+                            files_count,
+                            bytes_restored,
+                        )
                     }
                     Err(e) => {
                         let msg = format!("Manifest computation failed: {}", e);
                         tracing::warn!("  {}", msg);
-                        (oc, None, VerificationStatus::Fail, msg,
-                         files_count, bytes_restored)
+                        (
+                            oc,
+                            None,
+                            VerificationStatus::Fail,
+                            msg,
+                            files_count,
+                            bytes_restored,
+                        )
                     }
                 }
             }
             Err(e) => {
                 let msg = format!("Restore failed: {}", e);
                 tracing::warn!("  {}", msg);
-                (RestoreOutcome {
-                    snapshot_id: snapshot_id.clone(),
-                    files_count: 0,
-                    bytes_restored: 0,
-                    count_is_meaningful: true,
-                }, None, VerificationStatus::Fail, msg, 0u64, 0u64)
+                (
+                    RestoreOutcome {
+                        snapshot_id: snapshot_id.clone(),
+                        files_count: 0,
+                        bytes_restored: 0,
+                        count_is_meaningful: true,
+                    },
+                    None,
+                    VerificationStatus::Fail,
+                    msg,
+                    0u64,
+                    0u64,
+                )
             }
         };
     let completed_at = unix_now();
@@ -183,14 +230,26 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
 
     // Sign the run.
     if let Some(ref s) = signer {
-        let manifest_hash = run.manifest.as_ref()
+        let manifest_hash = run
+            .manifest
+            .as_ref()
             .map(manifest_sha256)
             .unwrap_or_default();
         if let Ok(msg) = run_signing_message(
-            run_id, &repo_config.name, &snapshot_id,
-            if matches!(status, VerificationStatus::Pass) { "pass" } else { "fail" },
-            files_count, bytes_restored, &message,
-            &manifest_hash, started_at, completed_at,
+            run_id,
+            &repo_config.name,
+            &snapshot_id,
+            if matches!(status, VerificationStatus::Pass) {
+                "pass"
+            } else {
+                "fail"
+            },
+            files_count,
+            bytes_restored,
+            &message,
+            &manifest_hash,
+            started_at,
+            completed_at,
         ) {
             let sig = s.sign(&msg);
             let pk = s.public_key_hex();
@@ -206,10 +265,20 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
 
 fn start_minio() -> anyhow::Result<(u16, String)> {
     let out = StdCommand::new("docker")
-        .args(["run", "-d", "--rm", "-p", "9000",
-            "-e", "MINIO_ROOT_USER=minioadmin",
-            "-e", "MINIO_ROOT_PASSWORD=minioadmin",
-            MINIO_IMAGE, "server", "/data"])
+        .args([
+            "run",
+            "-d",
+            "--rm",
+            "-p",
+            "9000",
+            "-e",
+            "MINIO_ROOT_USER=minioadmin",
+            "-e",
+            "MINIO_ROOT_PASSWORD=minioadmin",
+            MINIO_IMAGE,
+            "server",
+            "/data",
+        ])
         .output()
         .expect("Docker required");
     if !out.status.success() {
@@ -227,8 +296,8 @@ fn start_minio() -> anyhow::Result<(u16, String)> {
         .args(["port", &id, "9000"])
         .output()
         .context("failed to run docker port")?;
-    let port_str = String::from_utf8(port_out.stdout)
-        .context("docker port returned non-UTF-8 output")?;
+    let port_str =
+        String::from_utf8(port_out.stdout).context("docker port returned non-UTF-8 output")?;
     // `docker port` may emit multiple bindings (e.g. `0.0.0.0:51832` and
     // `[::]:51832` on macOS/ipv6). Pick the first line whose trailing
     // `:`-separated token parses as a port.

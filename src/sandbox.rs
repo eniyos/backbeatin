@@ -270,10 +270,7 @@ impl Sandbox {
 
     /// Inner logic: start, wait, and capture logs for an already-created
     /// container.  Does NOT attempt removal — the caller must clean up.
-    async fn run_container_inner(
-        &self,
-        id: &str,
-    ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    async fn run_container_inner(&self, id: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         // Start it.
         self.docker
             .start_container::<String>(id, None::<StartContainerOptions<String>>)
