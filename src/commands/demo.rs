@@ -26,7 +26,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     let _ = StdCommand::new("docker").args(["pull", "-q", MINIO_IMAGE]).output();
 
     // Start MinIO.
-    let (port, minio_id) = start_minio();
+    let (port, minio_id) = start_minio()?;
     tracing::info!("MinIO started on port {}", port);
 
     let tmp = tempfile::tempdir().context("tempdir")?;
@@ -204,7 +204,7 @@ async fn verify_and_store(config_path: &std::path::Path, repo_name: &str, store:
 
 // ── MinIO helpers ──
 
-fn start_minio() -> (u16, String) {
+fn start_minio() -> anyhow::Result<(u16, String)> {
     let out = StdCommand::new("docker")
         .args(["run", "-d", "--rm", "-p", "9000",
             "-e", "MINIO_ROOT_USER=minioadmin",
@@ -213,13 +213,17 @@ fn start_minio() -> (u16, String) {
         .output()
         .expect("Docker required");
     assert!(out.status.success(), "minio start: {}", String::from_utf8_lossy(&out.stderr));
-    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let id = String::from_utf8(out.stdout)
+        .context("docker run returned non-UTF-8 container ID")?
+        .trim()
+        .to_string();
 
     let port_out = StdCommand::new("docker")
         .args(["port", &id, "9000"])
         .output()
-        .unwrap();
-    let port_str = String::from_utf8(port_out.stdout).unwrap();
+        .context("failed to run docker port")?;
+    let port_str = String::from_utf8(port_out.stdout)
+        .context("docker port returned non-UTF-8 output")?;
     // `docker port` may emit multiple bindings (e.g. `0.0.0.0:51832` and
     // `[::]:51832` on macOS/ipv6). Pick the first line whose trailing
     // `:`-separated token parses as a port.
@@ -228,7 +232,7 @@ fn start_minio() -> (u16, String) {
         .find_map(|line| line.rsplit(':').next().and_then(|p| p.trim().parse().ok()))
         .expect("could not parse MinIO host port");
     std::thread::sleep(std::time::Duration::from_secs(2));
-    (port, id)
+    Ok((port, id))
 }
 
 fn stop_container(id: &str) {

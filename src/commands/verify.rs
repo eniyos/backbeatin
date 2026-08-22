@@ -31,10 +31,7 @@ use backbeatin::{
     store::{Store, NewVerificationRun, unix_now},
     verify::{compute_manifest, verify_restore, VerificationResult, VerificationStatus},
 };
-use backbeatin::DEFAULT_IMAGE_RESTIC;
-use backbeatin::DEFAULT_IMAGE_BORG;
-use backbeatin::manifest_sha256;
-use backbeatin::run_signing_message;
+use backbeatin::{DEFAULT_IMAGE_RESTIC, DEFAULT_IMAGE_BORG, manifest_sha256, run_signing_message};
 
 /// Execute the `verify` subcommand.
 ///
@@ -66,12 +63,7 @@ pub async fn run_verify(
 
     let store = Store::open(db_path).context("Failed to open store database")?;
 
-    // We don't need the result here since this is the CLI interface
-    // The result is already logged and printed by run_restore
-    match run_restore(repo_config, &store).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e),
-    }
+    run_restore(repo_config, &store).await.map(|_| ())
 }
 
 /// Perform the actual restore, verification, and persistence.
