@@ -144,7 +144,18 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
     let completed_at = unix_now();
 
     // --- Step 4: verify ---
-    let result = verify_restore(&outcome, &manifest);
+    // Load the manifest of the last successful run of this snapshot (if
+    // any) so drift detection can catch same-size content corruption.
+    let baseline = store
+        .last_successful_manifest(&config.name, &snapshot_id)
+        .context("Failed to load baseline manifest for drift detection")?;
+    if baseline.is_some() {
+        tracing::info!(
+            "Baseline manifest found for snapshot {} — drift detection active",
+            snapshot_id
+        );
+    }
+    let result = verify_restore(&outcome, &manifest, baseline.as_ref());
 
     // --- Step 5: persist to store ---
     let status_str = match result.status {

@@ -13,7 +13,10 @@
 //! - **Isolation**: Restored files never touch the host filesystem
 //! - **Cleanup**: Containers are force-removed after verification
 //! - **Consistency**: Same Docker images across different platforms
-//! - **Sandboxing**: Limited network access and container capabilities
+//! - **Sandboxing**: All Linux capabilities are dropped; local filesystem
+//!   repos run with no network at all (`NetworkMode: none`).  Remote
+//!   backends (S3, B2, SFTP, …) keep default bridge networking because
+//!   the restore itself must fetch chunks from the endpoint.
 //!
 //! # Container Lifecycle
 //!
@@ -42,6 +45,42 @@ pub const DEFAULT_IMAGE_BORG: &str = "borgbackup/borg:latest";
 
 /// Path inside the container where restored files appear.
 const CONTAINER_OUTPUT_PATH: &str = "/restore-output";
+
+/// Remote URI schemes that require outbound network access to fetch
+/// backup chunks.  Anything else is treated as a local filesystem repo.
+const REMOTE_URI_SCHEMES: &[&str] = &[
+    "s3:",
+    "b2:",
+    "gs:",
+    "azure:",
+    "swift:",
+    "rest:",
+    "rclone:",
+    "ssh:",
+    "sftp:",
+    "http://",
+    "https://",
+];
+
+/// Decide the Docker network mode for a restore against `uri`.
+///
+/// Local filesystem repos need no network at all, so the container runs
+/// with `NetworkMode: none`.  Remote backends (S3, B2, SFTP, …) must be
+/// able to reach their endpoint to fetch chunks, so they get Docker's
+/// default bridge network — the Docker API alone cannot restrict egress
+/// to a single host without external firewall tooling, and we do not
+/// claim otherwise.
+#[must_use]
+pub fn network_mode_for_uri(uri: &str) -> Option<String> {
+    let remote = REMOTE_URI_SCHEMES
+        .iter()
+        .any(|scheme| uri.starts_with(scheme));
+    if remote {
+        None // default bridge network
+    } else {
+        Some("none".to_string())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Sandbox
@@ -169,7 +208,7 @@ impl Sandbox {
         );
 
         let (stdout, _stderr) = self
-            .run_command(cmd, env, vec![bind])
+            .run_command(cmd, env, vec![bind], network_mode_for_uri(&config.uri))
             .await
             .context("Docker container restore failed")?;
 
@@ -224,7 +263,7 @@ impl Sandbox {
         );
 
         let (stdout, _stderr) = self
-            .run_command(cmd, env, vec![bind])
+            .run_command(cmd, env, vec![bind], network_mode_for_uri(&config.uri))
             .await
             .context("Docker container Borg extract failed")?;
 
@@ -237,11 +276,18 @@ impl Sandbox {
     /// stdout/stderr, then removes the container (force=true).
     /// The container is always removed when this function returns, even on
     /// error.
+    ///
+    /// Hardening applied to every container:
+    /// - All Linux capabilities are dropped (`CapDrop: ALL`) — restore
+    ///   tools need none.
+    /// - `network_mode` controls egress: `Some("none")` for local repos,
+    ///   `None` (default bridge) when the repo backend is remote.
     async fn run_command(
         &self,
         cmd: Vec<String>,
         env: Vec<String>,
         binds: Vec<String>,
+        network_mode: Option<String>,
     ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         let config: Config<String> = Config {
             image: Some(self.image.clone()),
@@ -249,6 +295,8 @@ impl Sandbox {
             env: Some(env),
             host_config: Some(HostConfig {
                 binds: Some(binds),
+                network_mode: network_mode,
+                cap_drop: Some(vec!["ALL".to_string()]),
                 ..Default::default()
             }),
             ..Default::default()
@@ -346,5 +394,28 @@ impl Sandbox {
         }
 
         Ok((stdout, stderr))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_local_repo_gets_no_network() {
+        assert_eq!(network_mode_for_uri("/srv/backups/restic"), Some("none".into()));
+        assert_eq!(network_mode_for_uri("relative/path/repo"), Some("none".into()));
+    }
+
+    #[test]
+    fn test_remote_repos_keep_default_network() {
+        assert_eq!(
+            network_mode_for_uri("s3:https://s3.us-east-1.amazonaws.com/bucket/repo"),
+            None
+        );
+        assert_eq!(network_mode_for_uri("b2:my-bucket:/restic"), None);
+        assert_eq!(network_mode_for_uri("ssh://user@host:./repo"), None);
+        assert_eq!(network_mode_for_uri("sftp://user@host/repo"), None);
+        assert_eq!(network_mode_for_uri("rest:https://rest-server:8000/repo"), None);
     }
 }

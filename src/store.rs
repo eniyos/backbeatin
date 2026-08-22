@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::config::RepoConfig;
 use crate::verify::{Manifest, VerificationStatus};
@@ -303,6 +303,47 @@ impl Store {
             rusqlite::params![signature_hex, public_key_hex, run_id],
         )?;
         Ok(())
+    }
+
+    /// Return the manifest of the most recent *successful* verification run
+    /// for a given repo and snapshot, if one exists.
+    ///
+    /// This is the baseline for drift detection: restoring the same
+    /// snapshot twice must yield a byte-identical file tree, so any
+    /// difference between this manifest and a new run's manifest is
+    /// evidence of corruption.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails or a stored manifest
+    /// cannot be deserialized.
+    pub fn last_successful_manifest(
+        &self,
+        repo_name: &str,
+        snapshot_id: &str,
+    ) -> anyhow::Result<Option<Manifest>> {
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let json: Option<String> = conn
+            .query_row(
+                "SELECT r.manifest_json
+                 FROM verification_runs r
+                 JOIN repos p ON p.id = r.repo_id
+                 WHERE p.name = ?1 AND r.snapshot_id = ?2
+                   AND r.status = 'pass' AND r.manifest_json IS NOT NULL
+                 ORDER BY r.completed_at DESC
+                 LIMIT 1",
+                rusqlite::params![repo_name, snapshot_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match json {
+            Some(s) => Ok(Some(serde_json::from_str(&s)?)),
+            None => Ok(None),
+        }
     }
 
     /// Return the most recent verification runs for a given repo.

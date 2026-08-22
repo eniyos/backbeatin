@@ -19,6 +19,8 @@
 //! - Empty restores always fail
 //! - Backend-reported zero file counts fail unless the backend doesn't report counts
 //! - File count mismatches beyond 5% tolerance fail
+//! - Drift against a previously successful run of the *same snapshot* fails
+//!   (catches same-size content corruption that count/size checks miss)
 //! - Zero-byte files are logged but don't cause failure
 
 use std::collections::BTreeMap;
@@ -175,16 +177,78 @@ pub fn compute_manifest(dir: &Path) -> anyhow::Result<Manifest> {
 // Verification logic
 // ---------------------------------------------------------------------------
 
+/// Per-file differences between two manifests.
+///
+/// Used for drift detection: a restore of the same snapshot must produce a
+/// byte-identical file tree every time, so any drift is evidence of
+/// corruption (or a changed snapshot, which the caller must rule out).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DriftReport {
+    /// Paths present in the current manifest but absent from the baseline.
+    pub added: Vec<String>,
+    /// Paths present in the baseline but missing from the current manifest.
+    pub removed: Vec<String>,
+    /// Paths present in both but with a different SHA-256 digest or size.
+    pub changed: Vec<String>,
+}
+
+impl DriftReport {
+    /// True when both manifests describe exactly the same file tree.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
+    }
+
+    /// Total number of differing entries.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.added.len() + self.removed.len() + self.changed.len()
+    }
+}
+
+/// Compute the per-file drift between a baseline manifest (from a previous
+/// successful run) and the manifest of the current run.
+#[must_use]
+pub fn manifest_drift(baseline: &Manifest, current: &Manifest) -> DriftReport {
+    let mut report = DriftReport::default();
+
+    for (path, entry) in &current.entries {
+        match baseline.entries.get(path) {
+            None => report.added.push(path.clone()),
+            Some(prev) if prev.sha256 != entry.sha256 || prev.size != entry.size => {
+                report.changed.push(path.clone());
+            }
+            Some(_) => {}
+        }
+    }
+    for path in baseline.entries.keys() {
+        if !current.entries.contains_key(path) {
+            report.removed.push(path.clone());
+        }
+    }
+
+    report
+}
+
 /// Compare the backend-reported restore outcome against the local manifest
 /// and return a [`VerificationResult`].
 ///
-/// For Phase 1 this checks:
+/// This checks:
 ///   * The manifest is non-empty (files were actually restored).
 ///   * The backend reported a non-zero file count (if we found files).
 ///   * The file count from the manifest roughly matches what the backend
 ///     reported (allow a small delta for metadata entries).
+///   * If `baseline` is provided — the manifest of the most recent
+///     *successful* run for the same snapshot — the current manifest must
+///     match it file-for-file.  Any SHA-256 or size drift fails the run,
+///     which is what catches same-size content corruption (bit flips,
+///     truncation with padding).
 #[must_use]
-pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> VerificationResult {
+pub fn verify_restore(
+    outcome: &RestoreOutcome,
+    manifest: &Manifest,
+    baseline: Option<&Manifest>,
+) -> VerificationResult {
     let actual_count = manifest.total_files;
 
     // --- Check 1: restore actually produced files ---
@@ -249,6 +313,56 @@ pub fn verify_restore(outcome: &RestoreOutcome, manifest: &Manifest) -> Verifica
         .filter(|e| e.size == 0 && !e.sha256.is_empty())
         .collect();
 
+    // --- Check 5: drift against the previous successful run of the same
+    // snapshot.  A snapshot's content is immutable, so restoring it twice
+    // must yield byte-identical trees; any difference here means the
+    // restore itself is corrupted (even if counts and sizes still match).
+    if let Some(prev) = baseline {
+        let drift = manifest_drift(prev, manifest);
+        if !drift.is_empty() {
+            let mut details = Vec::new();
+            if !drift.changed.is_empty() {
+                details.push(format!(
+                    "{} changed ({}: {})",
+                    drift.changed.len(),
+                    if drift.changed.len() == 1 {
+                        "content hash differs"
+                    } else {
+                        "content hashes differ"
+                    },
+                    drift.changed.first().map_or("?", String::as_str)
+                ));
+            }
+            if !drift.removed.is_empty() {
+                details.push(format!(
+                    "{} missing ({}: {})",
+                    drift.removed.len(),
+                    if drift.removed.len() == 1 { "file" } else { "files" },
+                    drift.removed.first().map_or("?", String::as_str)
+                ));
+            }
+            if !drift.added.is_empty() {
+                details.push(format!(
+                    "{} unexpected ({}: {})",
+                    drift.added.len(),
+                    if drift.added.len() == 1 { "file" } else { "files" },
+                    drift.added.first().map_or("?", String::as_str)
+                ));
+            }
+            return VerificationResult {
+                status: VerificationStatus::Fail,
+                message: format!(
+                    "Drift vs. previous successful run of snapshot {}: {} \
+                     file(s) differ — {}",
+                    outcome.snapshot_id,
+                    drift.total(),
+                    details.join(", ")
+                ),
+                manifest: manifest.clone(),
+            };
+        }
+    }
+
     let pass_msg = if zero_byte_files.is_empty() {
         format!(
             "Restore verified successfully: {} files, {} bytes restored from snapshot {}",
@@ -294,7 +408,7 @@ mod tests {
             count_is_meaningful: true,
         };
 
-        let result = verify_restore(&outcome, &manifest);
+        let result = verify_restore(&outcome, &manifest, None);
         assert_eq!(result.status, VerificationStatus::Fail);
     }
 
@@ -323,7 +437,7 @@ mod tests {
             count_is_meaningful: true,
         };
 
-        let result = verify_restore(&outcome, &manifest);
+        let result = verify_restore(&outcome, &manifest, None);
         assert_eq!(result.status, VerificationStatus::Pass);
     }
 
@@ -350,7 +464,7 @@ mod tests {
             count_is_meaningful: true,
         };
 
-        let result = verify_restore(&outcome, &manifest);
+        let result = verify_restore(&outcome, &manifest, None);
         assert_eq!(result.status, VerificationStatus::Fail);
         assert!(result.message.contains("Backend reported 0 files"));
     }
@@ -369,7 +483,7 @@ mod tests {
             bytes_restored: 0,
             count_is_meaningful: true,
         };
-        let result = verify_restore(&outcome, &manifest);
+        let result = verify_restore(&outcome, &manifest, None);
         // Should fail because the manifest is empty (check 1), not because of
         // the zero-backend check (check 2).
         assert_eq!(result.status, VerificationStatus::Fail);
@@ -401,7 +515,7 @@ mod tests {
             count_is_meaningful: false,
         };
 
-        let result = verify_restore(&outcome, &manifest);
+        let result = verify_restore(&outcome, &manifest, None);
         assert_eq!(result.status, VerificationStatus::Pass);
     }
 
@@ -428,7 +542,127 @@ mod tests {
             count_is_meaningful: true,
         };
 
-        let result = verify_restore(&outcome, &manifest);
+        let result = verify_restore(&outcome, &manifest, None);
         assert_eq!(result.status, VerificationStatus::Fail);
+    }
+
+    // ------------------------------------------------------------------
+    // Drift detection tests
+    // ------------------------------------------------------------------
+
+    fn sample_manifest(hash: &str) -> Manifest {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "a.txt".into(),
+            ManifestEntry {
+                relative_path: "a.txt".into(),
+                sha256: hash.into(),
+                size: 100,
+            },
+        );
+        entries.insert(
+            "b.txt".into(),
+            ManifestEntry {
+                relative_path: "b.txt".into(),
+                sha256: "bbb".into(),
+                size: 200,
+            },
+        );
+        Manifest {
+            total_files: 2,
+            total_bytes: 300,
+            entries,
+        }
+    }
+
+    fn passing_outcome(count: u64, bytes: u64) -> RestoreOutcome {
+        RestoreOutcome {
+            snapshot_id: "snap1".into(),
+            files_count: count,
+            bytes_restored: bytes,
+            count_is_meaningful: true,
+        }
+    }
+
+    #[test]
+    fn test_identical_baseline_passes() {
+        let manifest = sample_manifest("aaa");
+        let baseline = sample_manifest("aaa");
+        let outcome = passing_outcome(2, 300);
+
+        let result = verify_restore(&outcome, &manifest, Some(&baseline));
+        assert_eq!(result.status, VerificationStatus::Pass);
+    }
+
+    #[test]
+    fn test_same_size_bit_flip_fails() {
+        // The critical case: sizes are identical, but content hashes differ.
+        // Count/size checks cannot catch this — drift detection must.
+        let manifest = sample_manifest("CORRUPTED");
+        let baseline = sample_manifest("aaa");
+        let outcome = passing_outcome(2, 300);
+
+        let result = verify_restore(&outcome, &manifest, Some(&baseline));
+        assert_eq!(result.status, VerificationStatus::Fail);
+        assert!(result.message.contains("Drift"));
+        assert!(result.message.contains("a.txt"));
+    }
+
+    #[test]
+    fn test_missing_file_vs_baseline_fails() {
+        let baseline = sample_manifest("aaa");
+        let mut manifest = sample_manifest("aaa");
+        manifest.entries.remove("b.txt");
+        manifest.total_files = 1;
+        manifest.total_bytes = 100;
+        let outcome = passing_outcome(1, 100);
+
+        let result = verify_restore(&outcome, &manifest, Some(&baseline));
+        assert_eq!(result.status, VerificationStatus::Fail);
+        assert!(result.message.contains("b.txt"));
+    }
+
+    #[test]
+    fn test_extra_file_vs_baseline_fails() {
+        let baseline = sample_manifest("aaa");
+        let mut manifest = sample_manifest("aaa");
+        manifest.entries.insert(
+            "rogue.txt".into(),
+            ManifestEntry {
+                relative_path: "rogue.txt".into(),
+                sha256: "zzz".into(),
+                size: 1,
+            },
+        );
+        manifest.total_files = 3;
+        manifest.total_bytes = 301;
+        // Backend count matches current disk state so checks 2/3 pass.
+        let outcome = passing_outcome(3, 301);
+
+        let result = verify_restore(&outcome, &manifest, Some(&baseline));
+        assert_eq!(result.status, VerificationStatus::Fail);
+        assert!(result.message.contains("rogue.txt"));
+    }
+
+    #[test]
+    fn test_manifest_drift_report_contents() {
+        let baseline = sample_manifest("aaa");
+        let mut current = sample_manifest("CORRUPTED");
+        current.entries.remove("b.txt");
+        current.entries.insert(
+            "c.txt".into(),
+            ManifestEntry {
+                relative_path: "c.txt".into(),
+                sha256: "ccc".into(),
+                size: 10,
+            },
+        );
+
+        let drift = manifest_drift(&baseline, &current);
+        assert_eq!(drift.changed, vec!["a.txt".to_string()]);
+        assert_eq!(drift.removed, vec!["b.txt".to_string()]);
+        assert_eq!(drift.added, vec!["c.txt".to_string()]);
+        assert_eq!(drift.total(), 3);
+        assert!(!drift.is_empty());
     }
 }
