@@ -38,9 +38,41 @@ B2_ACCOUNT_ID = "Backblaze application key ID"
 B2_ACCOUNT_KEY = "Backblaze application key"
 
 # ───────────────────────────────────────────────────────────
+# Another repo — Borg example (local path)
+# ───────────────────────────────────────────────────────────
+
+[[repo]]
+name = "home-borg"
+backend = "borg"
+uri = "/mnt/backups/borg-repo"
+
+# Optional: verify a deterministic sample (percent of files or a path glob)
+# on the regular schedule instead of a full restore. When sampling is set,
+# pair it with `full_schedule` so full restores still run periodically.
+sample = "5"                      # or a glob like "data/**"
+# schedule = "0 4 * * * *"        # sampled run every day at 04:00
+# full_schedule = "0 4 * * 0 *"   # full restore every Sunday at 04:00
+
+[repo.credential_env_vars]
+BORG_PASSPHRASE = "Borg repo passphrase (if encrypted)"
+
+# ───────────────────────────────────────────────────────────
+# Sandbox resource limits (optional)
+# ───────────────────────────────────────────────────────────
+#
+# [sandbox]
+# cpus = 2.0                  # CPU quota for the restore container
+# memory_bytes = 2147483648   # 2 GiB memory cap
+# disk_budget_bytes = 10737418240  # require 10 GiB free before restoring
+
+# ───────────────────────────────────────────────────────────
 # Notifications (optional)
 # ───────────────────────────────────────────────────────────
 #
 # [notifications]
 # webhook_url = "https://hooks.slack.com/services/T00/B00/xxxx"
 # on_failure_only = true
+#
+# Dead man's switch (optional):
+# heartbeat_url = "https://hc-ping.com/<uuid>"   # pinged on every success
+# max_success_age_hours = 26                     # alert if no success in 26h

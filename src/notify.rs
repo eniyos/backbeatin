@@ -201,6 +201,49 @@ impl Notifier {
 
         Ok(())
     }
+
+    /// Ping the configured dead man's switch endpoint (if any).
+    ///
+    /// Called after every *successful* verification run.  The external
+    /// watchdog (Healthchecks.io, Cronitor, Uptime Kuma, …) is what alerts
+    /// when pings stop arriving — silent non-execution cannot be detected
+    /// by this process itself.
+    ///
+    /// Does nothing (returns `Ok`) when no `heartbeat_url` is configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heartbeat URL fails SSRF validation, the
+    /// request cannot be sent, or the server responds with a non-success
+    /// status code.
+    pub async fn send_heartbeat(&self, repo_name: &str) -> anyhow::Result<()> {
+        let Some(url) = self.config.heartbeat_url.as_deref() else {
+            return Ok(());
+        };
+
+        Self::validate_webhook_url(url)?;
+
+        let payload = serde_json::json!({
+            "text": format!("💓 Backbeatin heartbeat: repo '{}' verified successfully", repo_name),
+            "repo": repo_name,
+            "status": "ok",
+            "ts": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .cast_signed(),
+        });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Heartbeat webhook returned {}: {}", status, body.trim());
+        }
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

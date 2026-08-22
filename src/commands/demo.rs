@@ -157,6 +157,11 @@ async fn verify_and_store(
     let backend = ResticBackend::from_config(repo_config)?;
     let snapshot_id = backend.latest_snapshot_id().await?;
 
+    // Baseline for drift detection: the manifest of the last successful
+    // run of this snapshot (None on the first run).  The demo always does
+    // full restores, so the scope is None.
+    let baseline = store.last_successful_manifest(repo_name, &snapshot_id, None)?;
+
     // Attempt restore — on failure, still record a "fail" run with the error.
     let tmp2 = tempfile::tempdir()?;
     let (_outcome, manifest_opt, status, message, files_count, bytes_restored) =
@@ -166,7 +171,7 @@ async fn verify_and_store(
                 let bytes_restored = oc.bytes_restored;
                 match compute_manifest(tmp2.path()) {
                     Ok(mf) => {
-                        let result = verify_restore(&oc, &mf);
+                        let result = verify_restore(&oc, &mf, baseline.as_ref());
                         (
                             oc,
                             Some(mf),
@@ -222,6 +227,7 @@ async fn verify_and_store(
         manifest: manifest_opt,
         signature_hex: None,
         public_key_hex: None,
+        restore_scope: None,
         started_at,
         completed_at,
     };

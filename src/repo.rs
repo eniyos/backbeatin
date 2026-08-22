@@ -68,6 +68,16 @@ pub struct RepoStats {
     pub snapshot_count: u64,
 }
 
+/// A single regular file inside a snapshot/archive, as reported by the
+/// backend's listing command.  Used for sampled restores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedFile {
+    /// Path of the file as stored in the backup.
+    pub path: String,
+    /// Size in bytes.
+    pub size: u64,
+}
+
 /// Generic interface that both Restic and Borg backends implement.
 ///
 /// The rest of the system interacts only through this trait — new backends
@@ -86,6 +96,13 @@ pub trait BackupBackend: Send + Sync {
         snapshot_id: &str,
         target_dir: &Path,
     ) -> anyhow::Result<RestoreOutcome>;
+
+    /// List every regular file contained in `snapshot_id`.
+    ///
+    /// Used to plan sampled restores (selecting a subset of files before
+    /// restoring).  May be expensive on very large snapshots since it
+    /// walks the full archive metadata.
+    async fn list_snapshot_files(&self, snapshot_id: &str) -> anyhow::Result<Vec<ListedFile>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +194,40 @@ impl ResticBackend {
     /// the expected `RepoStats` schema.
     pub fn parse_stats_output(output: &[u8]) -> anyhow::Result<RepoStats> {
         serde_json::from_slice(output).context("Failed to parse restic stats JSON output")
+    }
+
+    /// Parse the JSON-lines output of `restic ls --json <snapshot>`.
+    ///
+    /// Every line is a JSON object; regular files have `"type": "file"`
+    /// and carry `path` and `size`.  The leading snapshot node and
+    /// directory entries are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the output is not valid UTF-8.
+    pub fn parse_ls_output(output: &[u8]) -> anyhow::Result<Vec<ListedFile>> {
+        let text = String::from_utf8(output.to_vec()).context("restic ls output was not UTF-8")?;
+
+        let mut files = Vec::new();
+        for line in text.lines() {
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if val.get("type").and_then(|t| t.as_str()) != Some("file") {
+                continue;
+            }
+            let path = match val.get("path").and_then(|p| p.as_str()) {
+                Some(p) => p.to_string(),
+                None => continue,
+            };
+            let size = val
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            files.push(ListedFile { path, size });
+        }
+
+        Ok(files)
     }
 
     /// Parse the JSON output of `restic restore … --json`.
@@ -281,6 +332,24 @@ impl BackupBackend for ResticBackend {
 
         Self::parse_restore_output(&output.stdout, snapshot_id)
     }
+
+    async fn list_snapshot_files(&self, snapshot_id: &str) -> anyhow::Result<Vec<ListedFile>> {
+        let mut cmd = self.restic_command();
+        cmd.arg("ls").arg("--json").arg(snapshot_id);
+
+        let output = cmd.output().await.context("Failed to run 'restic ls'")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "restic ls failed (exit {}): {}",
+                output.status,
+                stderr.trim()
+            );
+        }
+
+        Self::parse_ls_output(&output.stdout)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +428,39 @@ impl BorgBackend {
 
         Ok(name.to_string())
     }
+
+    /// Parse the JSON-lines output of `borg list --json-lines <repo>::<archive>`.
+    ///
+    /// Each line is a JSON object describing one entry; regular files have
+    /// `"type": "-"` and carry `path` and `size`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the output is not valid UTF-8.
+    pub fn parse_archive_listing(output: &[u8]) -> anyhow::Result<Vec<ListedFile>> {
+        let text = String::from_utf8(output.to_vec()).context("borg list output was not UTF-8")?;
+
+        let mut files = Vec::new();
+        for line in text.lines() {
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if val.get("type").and_then(|t| t.as_str()) != Some("-") {
+                continue;
+            }
+            let path = match val.get("path").and_then(|p| p.as_str()) {
+                Some(p) => p.to_string(),
+                None => continue,
+            };
+            let size = val
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            files.push(ListedFile { path, size });
+        }
+
+        Ok(files)
+    }
 }
 
 #[async_trait]
@@ -424,6 +526,25 @@ impl BackupBackend for BorgBackend {
             bytes_restored: 0,
             count_is_meaningful: false,
         })
+    }
+
+    async fn list_snapshot_files(&self, snapshot_id: &str) -> anyhow::Result<Vec<ListedFile>> {
+        let mut cmd = self.borg_command();
+        let archive_ref = format!("{}::{}", self.repo, snapshot_id);
+        cmd.arg("list").arg("--json-lines").arg(&archive_ref);
+
+        let output = cmd.output().await.context("Failed to run 'borg list'")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "borg list failed (exit {}): {}",
+                output.status,
+                stderr.trim()
+            );
+        }
+
+        Self::parse_archive_listing(&output.stdout)
     }
 }
 

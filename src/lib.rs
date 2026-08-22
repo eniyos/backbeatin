@@ -49,13 +49,15 @@
 
 pub mod config;
 pub mod repo;
+pub mod sample;
 pub mod sandbox;
 pub mod sign;
 pub mod store;
 pub mod verify;
 
 pub use config::{BackendType, Config, RepoConfig};
-pub use repo::{BackupBackend, BorgBackend, RepoStats, ResticBackend, RestoreOutcome};
+pub use repo::{BackupBackend, BorgBackend, ListedFile, RepoStats, ResticBackend, RestoreOutcome};
+pub use sample::{parse_sample_spec, scope_label, select_files, SampleSpec};
 pub use sandbox::Sandbox;
 pub use sign::{manifest_sha256, run_signing_message, Signer};
 pub use store::{unix_now, NewVerificationRun, Store, VerificationRunRecord};

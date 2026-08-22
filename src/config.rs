@@ -26,6 +26,8 @@
 //! [notifications]
 //! webhook_url = "https://hooks.slack.com/services/..."
 //! on_failure_only = true
+//! # Dead man's switch: pinged after every successful run
+//! heartbeat_url = "https://hc-ping.com/<uuid>"
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -49,6 +51,56 @@ pub struct Config {
 
     /// Optional notification configuration.
     pub notifications: Option<NotificationsConfig>,
+
+    /// Resource limits for the ephemeral restore container.
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
+}
+
+/// Resource limits applied to every ephemeral restore container.
+///
+/// A large or corrupted repo must not be able to exhaust host resources
+/// before the container is cleaned up.  CPU and memory are enforced by
+/// Docker; the disk budget is enforced as a pre-flight check on free
+/// space because the restore target is a host bind mount (the host must
+/// read the restored files back to compute the manifest).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SandboxConfig {
+    /// CPU cores available to the container (default 2.0).
+    #[serde(default = "default_sandbox_cpus")]
+    pub cpus: f64,
+
+    /// Memory limit in bytes (default 2 GiB).
+    #[serde(default = "default_sandbox_memory")]
+    pub memory_bytes: i64,
+
+    /// Maximum disk space the restore may need, in bytes (default 10 GiB).
+    /// Verification aborts before starting if the output filesystem has
+    /// less free space than this.
+    #[serde(default = "default_sandbox_disk")]
+    pub disk_budget_bytes: u64,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            cpus: default_sandbox_cpus(),
+            memory_bytes: default_sandbox_memory(),
+            disk_budget_bytes: default_sandbox_disk(),
+        }
+    }
+}
+
+fn default_sandbox_cpus() -> f64 {
+    2.0
+}
+
+fn default_sandbox_memory() -> i64 {
+    2 * 1024 * 1024 * 1024 // 2 GiB
+}
+
+fn default_sandbox_disk() -> u64 {
+    10 * 1024 * 1024 * 1024 // 10 GiB
 }
 
 impl Config {
@@ -137,6 +189,20 @@ pub struct RepoConfig {
     /// Defaults to "0 0 * * * *" (every hour) if not set.
     #[serde(default = "default_schedule")]
     pub schedule: String,
+
+    /// Optional sample spec applied to runs on `schedule` in daemon mode
+    /// (same syntax as `verify --sample`: a percentage or a path glob).
+    ///
+    /// Use on multi-TB repos so frequent runs stay cheap; pair with
+    /// `full_schedule` to keep full restores on a slower cadence.
+    #[serde(default)]
+    pub sample: Option<String>,
+
+    /// Optional cron expression for **full** (unsampled) verification runs
+    /// in daemon mode.  When set alongside `sample`, the regular schedule
+    /// restores only the sample while this cadence restores everything.
+    #[serde(default)]
+    pub full_schedule: Option<String>,
 }
 
 fn default_schedule() -> String {
@@ -155,6 +221,26 @@ pub struct NotificationsConfig {
     /// steady state).
     #[serde(default = "default_on_failure_only")]
     pub on_failure_only: bool,
+
+    /// Optional dead man's switch URL (e.g. a Healthchecks.io or Cronitor
+    /// ping endpoint), **separate from the failure webhook**.
+    ///
+    /// It is pinged once after every *successful* verification run.  The
+    /// external watchdog is expected to alert if the ping stops arriving
+    /// within its configured grace period — this is what makes silent
+    /// non-execution (crashed daemon, dead cron, host down) visible,
+    /// since no in-process check can detect its own absence.
+    #[serde(default)]
+    pub heartbeat_url: Option<String>,
+
+    /// Optional staleness window in hours for daemon mode.
+    ///
+    /// When set, the daemon periodically checks the store and fires a
+    /// failure alert on `webhook_url` if a repo has had no successful
+    /// run within this window (e.g. jobs being skipped while the daemon
+    /// is alive).
+    #[serde(default)]
+    pub max_success_age_hours: Option<u64>,
 }
 
 fn default_on_failure_only() -> bool {
@@ -164,6 +250,39 @@ fn default_on_failure_only() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sandbox_config_defaults() {
+        let toml_str = r#"
+[[repo]]
+name = "r"
+backend = "restic"
+uri = "s3:bucket/p"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(config.sandbox.cpus.to_bits(), 2.0f64.to_bits());
+        assert_eq!(config.sandbox.memory_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(config.sandbox.disk_budget_bytes, 10 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_sandbox_config_override() {
+        let toml_str = r#"
+[[repo]]
+name = "r"
+backend = "restic"
+uri = "s3:bucket/p"
+
+[sandbox]
+cpus = 0.5
+memory_bytes = 536870912
+disk_budget_bytes = 1073741824
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(config.sandbox.cpus.to_bits(), 0.5f64.to_bits());
+        assert_eq!(config.sandbox.memory_bytes, 536_870_912);
+        assert_eq!(config.sandbox.disk_budget_bytes, 1_073_741_824);
+    }
 
     #[test]
     fn test_parse_minimal_config() {
@@ -200,6 +319,8 @@ uri = "b2:mybucket:/path"
 [notifications]
 webhook_url = "https://hooks.slack.com/xxx"
 on_failure_only = true
+heartbeat_url = "https://hc-ping.com/some-uuid"
+max_success_age_hours = 26
 "#;
         let config: Config = toml::from_str(toml_str).expect("should parse");
         assert_eq!(config.repos.len(), 2);
@@ -209,6 +330,11 @@ on_failure_only = true
             .expect("notifications should be present");
         assert_eq!(notif.webhook_url, "https://hooks.slack.com/xxx");
         assert!(notif.on_failure_only);
+        assert_eq!(
+            notif.heartbeat_url.as_deref(),
+            Some("https://hc-ping.com/some-uuid")
+        );
+        assert_eq!(notif.max_success_age_hours, Some(26));
     }
 
     #[test]
@@ -246,10 +372,7 @@ BORG_PASSPHRASE = "repo passphrase"
         let config: Config = toml::from_str(toml_str).expect("should parse Borg config");
         assert_eq!(config.repos.len(), 1);
         assert_eq!(config.repos[0].name, "prod-borg");
-        match config.repos[0].backend {
-            BackendType::Borg => {} // expected
-            _ => panic!("expected Borg backend"),
-        }
+        assert!(matches!(config.repos[0].backend, BackendType::Borg));
         assert_eq!(config.repos[0].uri, "ssh://user@host:./repo");
         assert!(config.repos[0]
             .credential_env_vars

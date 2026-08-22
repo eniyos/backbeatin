@@ -64,23 +64,74 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}.tar.gz
 
-  release:
-    name: Create GitHub Release
+  sign:
+    name: Sign Release Artifacts
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      # Flatten the per-artifact directories into a single staging folder so
+      # SHA256SUMS and the signature cover exactly the files that ship.
+      - name: Stage artifacts
+        run: |
+          mkdir dist
+          find artifacts -name '*.tar.gz' -exec cp {} dist/ \;
+
+      # The Ed25519 private key is stored as a repository secret
+      # (RELEASE_SIGNING_KEY, base64-encoded PEM). Generate one with:
+      #   openssl genpkey -algorithm ed25519 -out release.key.pem
+      #   base64 -i release.key.pem   # store this value as the secret
+      # The matching public key lives in docs/release-key.pub (see the
+      # "Release verification" section of the README for distribution
+      # and rotation procedure).
+      - name: Generate SHA256SUMS and Ed25519 signature
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          echo "$RELEASE_SIGNING_KEY" | base64 -d > release.key.pem
+          chmod 600 release.key.pem
+          openssl pkeyutl -sign -rawin \
+            -inkey release.key.pem \
+            -in SHA256SUMS \
+            -out SHA256SUMS.sig
+          rm -f release.key.pem
+
+      - name: Upload signed bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-dist
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+
+  release:
+    name: Create GitHub Release
+    needs: sign
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download signed bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-dist
+          path: dist
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
           draft: false
           prerelease: false
           generate_release_notes: true

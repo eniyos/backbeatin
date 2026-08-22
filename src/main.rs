@@ -22,8 +22,9 @@ async fn main() -> anyhow::Result<()> {
             repo,
             config,
             db_path,
+            sample,
         } => {
-            commands::verify::run_verify(&config, &repo, &db_path).await?;
+            commands::verify::run_verify(&config, &repo, &db_path, sample.as_deref()).await?;
         }
         Commands::Daemon { config, db_path } => {
             commands::daemon::run_daemon(&config, &db_path).await?;

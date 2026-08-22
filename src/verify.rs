@@ -230,6 +230,49 @@ pub fn manifest_drift(baseline: &Manifest, current: &Manifest) -> DriftReport {
     report
 }
 
+/// Build a short human-readable summary of a non-empty [`DriftReport`]
+/// for use in failure messages (e.g. `"2 changed (content hashes differ: /a),
+/// 1 missing (file: /b)"`).
+#[must_use]
+fn drift_failure_details(drift: &DriftReport) -> String {
+    fn bucket(
+        paths: &[String],
+        label: &str,
+        desc_singular: &str,
+        desc_plural: &str,
+    ) -> Option<String> {
+        if paths.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "{} {} ({}: {})",
+            paths.len(),
+            label,
+            if paths.len() == 1 {
+                desc_singular
+            } else {
+                desc_plural
+            },
+            paths.first().map_or("?", String::as_str)
+        ))
+    }
+
+    [
+        bucket(
+            &drift.changed,
+            "changed",
+            "content hash differs",
+            "content hashes differ",
+        ),
+        bucket(&drift.removed, "missing", "file", "files"),
+        bucket(&drift.added, "unexpected", "file", "files"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
 /// Compare the backend-reported restore outcome against the local manifest
 /// and return a [`VerificationResult`].
 ///
@@ -320,35 +363,6 @@ pub fn verify_restore(
     if let Some(prev) = baseline {
         let drift = manifest_drift(prev, manifest);
         if !drift.is_empty() {
-            let mut details = Vec::new();
-            if !drift.changed.is_empty() {
-                details.push(format!(
-                    "{} changed ({}: {})",
-                    drift.changed.len(),
-                    if drift.changed.len() == 1 {
-                        "content hash differs"
-                    } else {
-                        "content hashes differ"
-                    },
-                    drift.changed.first().map_or("?", String::as_str)
-                ));
-            }
-            if !drift.removed.is_empty() {
-                details.push(format!(
-                    "{} missing ({}: {})",
-                    drift.removed.len(),
-                    if drift.removed.len() == 1 { "file" } else { "files" },
-                    drift.removed.first().map_or("?", String::as_str)
-                ));
-            }
-            if !drift.added.is_empty() {
-                details.push(format!(
-                    "{} unexpected ({}: {})",
-                    drift.added.len(),
-                    if drift.added.len() == 1 { "file" } else { "files" },
-                    drift.added.first().map_or("?", String::as_str)
-                ));
-            }
             return VerificationResult {
                 status: VerificationStatus::Fail,
                 message: format!(
@@ -356,7 +370,7 @@ pub fn verify_restore(
                      file(s) differ — {}",
                     outcome.snapshot_id,
                     drift.total(),
-                    details.join(", ")
+                    drift_failure_details(&drift)
                 ),
                 manifest: manifest.clone(),
             };
@@ -417,9 +431,9 @@ mod tests {
         let mut entries = BTreeMap::new();
         for i in 0u64..100 {
             entries.insert(
-                format!("file_{}", i),
+                format!("file_{i}"),
                 ManifestEntry {
-                    relative_path: format!("file_{}", i),
+                    relative_path: format!("file_{i}"),
                     sha256: "abc".into(),
                     size: 100,
                 },

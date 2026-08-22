@@ -71,6 +71,19 @@ pub enum Commands {
         /// Path to the `SQLite` database for persisting run history
         #[arg(long, default_value = "backbeat.db", help = "Path to SQLite database")]
         db_path: PathBuf,
+
+        /// Restore only a sample instead of the full snapshot.
+        ///
+        /// Either a percentage ("10" or "10%") selecting a deterministic
+        /// hash-based subset of files, or a path glob ("*/logs/*.log")
+        /// selecting matching files. Use for large repos between full
+        /// restores.
+        #[arg(
+            long,
+            value_name = "PERCENT|GLOB",
+            help = "Sample restore: percentage (e.g. '10') or path glob (e.g. '*/logs/*')"
+        )]
+        sample: Option<String>,
     },
 
     /// Run the daemon scheduler for periodic verification

@@ -24,8 +24,10 @@ use std::path::Path;
 
 use anyhow::Context;
 use backbeatin::{
-    config::{BackendType, Config, RepoConfig},
-    repo::{BackupBackend, BorgBackend, ResticBackend, RestoreOutcome},
+    config::{BackendType, Config, RepoConfig, SandboxConfig},
+    notify::Notifier,
+    repo::{BackupBackend, BorgBackend, ListedFile, ResticBackend, RestoreOutcome},
+    sample::{parse_sample_spec, scope_label, select_files},
     sandbox::Sandbox,
     sign::Signer,
     store::{unix_now, NewVerificationRun, Store},
@@ -43,7 +45,12 @@ use backbeatin::{manifest_sha256, run_signing_message, DEFAULT_IMAGE_BORG, DEFAU
 /// 5. Compare the manifest against the backend-reported outcome
 /// 6. Persist the run to the store
 /// 7. Print pass/fail and exit with the appropriate code
-pub async fn run_verify(config_path: &Path, repo_name: &str, db_path: &Path) -> anyhow::Result<()> {
+pub async fn run_verify(
+    config_path: &Path,
+    repo_name: &str,
+    db_path: &Path,
+    sample: Option<&str>,
+) -> anyhow::Result<()> {
     let config = Config::load(config_path).context("Failed to load configuration")?;
 
     let repo_config = config
@@ -60,13 +67,34 @@ pub async fn run_verify(config_path: &Path, repo_name: &str, db_path: &Path) -> 
 
     let store = Store::open(db_path).context("Failed to open store database")?;
 
-    run_restore(repo_config, &store).await.map(|_| ())
+    // run_restore returns Err on verification failure, so reaching the next
+    // line means the run succeeded.
+    run_restore(repo_config, &store, sample, &config.sandbox).await?;
+
+    // Dead man's switch: ping the heartbeat endpoint on success so an
+    // external watchdog (Healthchecks.io, Cronitor, …) can alert when
+    // single-shot runs stop happening.
+    if let Some(notifier) = Notifier::from_config(&config) {
+        if let Err(e) = notifier.send_heartbeat(repo_name).await {
+            tracing::warn!("Failed to send heartbeat: {}", e);
+        }
+    }
+
+    Ok(())
 }
 
 /// Perform the actual restore, verification, and persistence.
 /// Returns the `VerificationResult` for notification purposes.
+///
+/// When `sample_spec` is `Some`, only a subset of the snapshot is restored
+/// (a percentage of files or a path glob) — see [`backbeatin::sample`].
 #[allow(clippy::too_many_lines)]
-pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<VerificationResult> {
+pub async fn run_restore(
+    config: &RepoConfig,
+    store: &Store,
+    sample_spec: Option<&str>,
+    sandbox_limits: &SandboxConfig,
+) -> anyhow::Result<VerificationResult> {
     let started_at = unix_now();
 
     // --- Step 1: discover latest snapshot ---
@@ -92,6 +120,39 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
     };
     tracing::info!("Latest snapshot: {}", snapshot_id);
 
+    // --- Step 1b: plan sampling (if requested) ---
+    let includes: Vec<String> = if let Some(spec) = sample_spec {
+        let parsed = parse_sample_spec(spec)?;
+        let files: Vec<ListedFile> = match config.backend {
+            BackendType::Restic => ResticBackend::from_config(config)?
+                .list_snapshot_files(&snapshot_id)
+                .await
+                .context("Failed to list snapshot contents for sampling")?,
+            BackendType::Borg => BorgBackend::from_config(config)?
+                .list_snapshot_files(&snapshot_id)
+                .await
+                .context("Failed to list archive contents for sampling")?,
+        };
+        let selected = select_files(&files, &parsed);
+        if selected.is_empty() {
+            anyhow::bail!(
+                "Sample spec '{spec}' selected 0 of {} files — nothing to verify",
+                files.len()
+            );
+        }
+        let selected_bytes: u64 = selected.iter().map(|f| f.size).sum();
+        tracing::info!(
+            "Sampling: {} of {} files selected ({} bytes) via spec '{spec}'",
+            selected.len(),
+            files.len(),
+            selected_bytes
+        );
+        selected.into_iter().map(|f| f.path).collect()
+    } else {
+        Vec::new()
+    };
+    let scope = scope_label(sample_spec);
+
     // --- Step 2: restore into temp directory via Docker sandbox ---
     let tmp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
     tracing::info!(
@@ -100,14 +161,16 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
         tmp_dir.path(),
     );
 
-    let sandbox = Sandbox::connect().context("Failed to connect to Docker for sandbox restore")?;
+    let sandbox = Sandbox::connect()
+        .context("Failed to connect to Docker for sandbox restore")?
+        .with_limits(sandbox_limits);
 
     let outcome = match config.backend {
         BackendType::Restic => {
             let sb = sandbox.with_image(DEFAULT_IMAGE_RESTIC);
             sb.ensure_image().await?;
             let stdout = sb
-                .run_restic_restore(config, &snapshot_id, tmp_dir.path())
+                .run_restic_restore(config, &snapshot_id, tmp_dir.path(), &includes)
                 .await
                 .context("Sandbox restic restore failed")?;
             ResticBackend::parse_restore_output(&stdout, &snapshot_id)
@@ -117,7 +180,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
             let sb = sandbox.with_image(DEFAULT_IMAGE_BORG);
             sb.ensure_image().await?;
             let _stdout = sb
-                .run_borg_extract(config, &snapshot_id, tmp_dir.path())
+                .run_borg_extract(config, &snapshot_id, tmp_dir.path(), &includes)
                 .await
                 .context("Sandbox Borg extract failed")?;
             // Borg does not produce JSON output for extract — return zero
@@ -144,10 +207,11 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
     let completed_at = unix_now();
 
     // --- Step 4: verify ---
-    // Load the manifest of the last successful run of this snapshot (if
-    // any) so drift detection can catch same-size content corruption.
+    // Load the manifest of the last successful run of this snapshot *with
+    // the same restore scope* (if any) so drift detection can catch
+    // same-size content corruption without confusing sampled and full runs.
     let baseline = store
-        .last_successful_manifest(&config.name, &snapshot_id)
+        .last_successful_manifest(&config.name, &snapshot_id, scope.as_deref())
         .context("Failed to load baseline manifest for drift detection")?;
     if baseline.is_some() {
         tracing::info!(
@@ -174,6 +238,7 @@ pub async fn run_restore(config: &RepoConfig, store: &Store) -> anyhow::Result<V
         manifest: Some(manifest),
         signature_hex: None,
         public_key_hex: None,
+        restore_scope: scope,
         started_at,
         completed_at,
     };

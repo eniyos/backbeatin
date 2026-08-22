@@ -27,6 +27,10 @@ pub struct VerificationRunRecord {
     pub signature_hex: Option<String>,
     /// Hex-encoded Ed25519 public key that produced the signature, if signed.
     pub public_key_hex: Option<String>,
+    /// Restore scope: `None` for full restores, `Some("sample:<spec>")`
+    /// for sampled runs.  Drift baselines are only compared within the
+    /// same scope.
+    pub restore_scope: Option<String>,
 }
 
 /// Data needed to insert a new verification run.
@@ -47,6 +51,9 @@ pub struct NewVerificationRun {
     pub signature_hex: Option<String>,
     /// Hex-encoded public key corresponding to the signature.
     pub public_key_hex: Option<String>,
+    /// Restore scope: `None` for full restores, `Some("sample:<spec>")`
+    /// for sampled runs.
+    pub restore_scope: Option<String>,
 }
 
 /// Return the current Unix epoch timestamp (seconds).
@@ -131,6 +138,7 @@ impl Store {
                 message         TEXT,
                 signature_hex   TEXT,
                 public_key_hex  TEXT,
+                restore_scope   TEXT,
                 started_at      INTEGER NOT NULL,
                 completed_at    INTEGER NOT NULL
             );
@@ -150,6 +158,9 @@ impl Store {
             "ALTER TABLE verification_runs ADD COLUMN signature_hex TEXT;
              ALTER TABLE verification_runs ADD COLUMN public_key_hex TEXT;",
         );
+
+        // Migration: add restore scope (sampled vs full) to existing DBs.
+        let _ = conn.execute_batch("ALTER TABLE verification_runs ADD COLUMN restore_scope TEXT;");
 
         Ok(())
     }
@@ -262,8 +273,8 @@ impl Store {
             "INSERT INTO verification_runs
                 (repo_id, snapshot_id, status, files_count, bytes_restored,
                  manifest_json, message, signature_hex, public_key_hex,
-                 started_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 restore_scope, started_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 repo_id,
                 run.snapshot_id,
@@ -274,6 +285,7 @@ impl Store {
                 run.message,
                 run.signature_hex,
                 run.public_key_hex,
+                run.restore_scope,
                 run.started_at,
                 run.completed_at,
             ],
@@ -305,13 +317,41 @@ impl Store {
         Ok(())
     }
 
+    /// Return the `completed_at` timestamp of the most recent *successful*
+    /// verification run for a repo, or `None` if the repo has never passed.
+    ///
+    /// Used by the dead man's switch staleness check in daemon mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub fn last_success_at(&self, repo_name: &str) -> anyhow::Result<Option<i64>> {
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ts: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT MAX(r.completed_at)
+                 FROM verification_runs r
+                 JOIN repos p ON p.id = r.repo_id
+                 WHERE p.name = ?1 AND r.status = 'pass'",
+                [repo_name],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?;
+        Ok(ts.flatten())
+    }
+
     /// Return the manifest of the most recent *successful* verification run
-    /// for a given repo and snapshot, if one exists.
+    /// for a given repo, snapshot, **and restore scope**, if one exists.
     ///
     /// This is the baseline for drift detection: restoring the same
-    /// snapshot twice must yield a byte-identical file tree, so any
-    /// difference between this manifest and a new run's manifest is
-    /// evidence of corruption.
+    /// snapshot twice with the same scope must yield a byte-identical
+    /// file tree, so any difference between this manifest and a new run's
+    /// manifest is evidence of corruption.  Scope matters because a
+    /// sampled restore legitimately produces a different (smaller) tree
+    /// than a full restore of the same snapshot.
     ///
     /// # Errors
     ///
@@ -321,26 +361,28 @@ impl Store {
         &self,
         repo_name: &str,
         snapshot_id: &str,
+        scope: Option<&str>,
     ) -> anyhow::Result<Option<Manifest>> {
         let conn = self
             .conn
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let json: Option<String> = conn
+        let json: Option<Option<String>> = conn
             .query_row(
                 "SELECT r.manifest_json
                  FROM verification_runs r
                  JOIN repos p ON p.id = r.repo_id
                  WHERE p.name = ?1 AND r.snapshot_id = ?2
                    AND r.status = 'pass' AND r.manifest_json IS NOT NULL
+                   AND COALESCE(r.restore_scope, '') = COALESCE(?3, '')
                  ORDER BY r.completed_at DESC
                  LIMIT 1",
-                rusqlite::params![repo_name, snapshot_id],
-                |row| row.get(0),
+                rusqlite::params![repo_name, snapshot_id, scope],
+                |row| row.get::<_, Option<String>>(0),
             )
             .optional()?;
 
-        match json {
+        match json.flatten() {
             Some(s) => Ok(Some(serde_json::from_str(&s)?)),
             None => Ok(None),
         }
@@ -366,7 +408,8 @@ impl Store {
                 "SELECT r.id, r.repo_id, r.snapshot_id, r.status,
                         r.files_count, r.bytes_restored, r.message,
                         r.signature_hex, r.public_key_hex,
-                        r.started_at, r.completed_at, p.name
+                        r.started_at, r.completed_at, p.name,
+                        r.restore_scope
                  FROM verification_runs r
                  JOIN repos p ON p.id = r.repo_id
                  WHERE p.name = ?1
@@ -388,6 +431,7 @@ impl Store {
                     started_at: row.get(9)?,
                     completed_at: row.get(10)?,
                     repo_name: row.get(11)?,
+                    restore_scope: row.get(12)?,
                 })
             })?;
 
@@ -431,6 +475,8 @@ mod tests {
             credential_env_vars: std::collections::HashMap::new(),
             snapshot_tag: None,
             schedule: "0 0 * * * *".to_string(),
+            sample: None,
+            full_schedule: None,
         };
 
         let id1 = store.get_or_create_repo(&config).unwrap();
@@ -460,6 +506,7 @@ mod tests {
             manifest: Some(manifest),
             signature_hex: None,
             public_key_hex: None,
+            restore_scope: None,
             started_at: 1_705_318_800,
             completed_at: 1_705_318_860,
         };
@@ -479,5 +526,94 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let records = store.recent_runs("nonexistent", 10).unwrap();
         assert!(records.is_empty());
+    }
+
+    fn make_run(
+        repo: &str,
+        snapshot: &str,
+        status: VerificationStatus,
+        completed_at: i64,
+    ) -> NewVerificationRun {
+        NewVerificationRun {
+            repo_name: repo.into(),
+            repo_backend: "restic".into(),
+            repo_uri: "s3:bucket/test".into(),
+            snapshot_id: snapshot.into(),
+            status,
+            files_count: 1,
+            bytes_restored: 10,
+            message: "msg".into(),
+            manifest: None,
+            signature_hex: None,
+            public_key_hex: None,
+            restore_scope: None,
+            started_at: completed_at - 10,
+            completed_at,
+        }
+    }
+
+    #[test]
+    fn test_last_success_at() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.last_success_at("r").unwrap(), None);
+
+        store
+            .insert_verification_run(&make_run("r", "s1", VerificationStatus::Fail, 100))
+            .unwrap();
+        // A failed run must not count as a success.
+        assert_eq!(store.last_success_at("r").unwrap(), None);
+
+        store
+            .insert_verification_run(&make_run("r", "s1", VerificationStatus::Pass, 200))
+            .unwrap();
+        store
+            .insert_verification_run(&make_run("r", "s2", VerificationStatus::Pass, 300))
+            .unwrap();
+        assert_eq!(store.last_success_at("r").unwrap(), Some(300));
+    }
+
+    #[test]
+    fn test_last_successful_manifest_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        let mut manifest = Manifest::default();
+        manifest.entries.insert(
+            "f.txt".into(),
+            crate::verify::ManifestEntry {
+                relative_path: "f.txt".into(),
+                sha256: "deadbeef".into(),
+                size: 42,
+            },
+        );
+        manifest.total_files = 1;
+        manifest.total_bytes = 42;
+
+        // No baseline before any successful run.
+        assert!(store
+            .last_successful_manifest("r", "s1", None)
+            .unwrap()
+            .is_none());
+
+        let mut run = make_run("r", "s1", VerificationStatus::Pass, 100);
+        run.manifest = Some(manifest.clone());
+        store.insert_verification_run(&run).unwrap();
+
+        let baseline = store
+            .last_successful_manifest("r", "s1", None)
+            .unwrap()
+            .expect("baseline should exist");
+        assert_eq!(baseline.entries.len(), 1);
+        assert_eq!(baseline.entries["f.txt"].sha256, "deadbeef");
+
+        // Different snapshot must not share the baseline.
+        assert!(store
+            .last_successful_manifest("r", "other", None)
+            .unwrap()
+            .is_none());
+
+        // A different restore scope must not share the baseline either.
+        assert!(store
+            .last_successful_manifest("r", "s1", Some("sample:10"))
+            .unwrap()
+            .is_none());
     }
 }

@@ -141,8 +141,16 @@ fn home_dir() -> Option<PathBuf> {
 
 /// Canonical serialization of verification-run data for signing.
 ///
-/// This produces a deterministic JSON string so the same run always results
-/// in the same signed bytes (assuming the field values are identical).
+/// The payload is a JSON object with fixed field names and declaration
+/// order.  Because every value is JSON-escaped and wrapped in a named
+/// field, there is no field-boundary ambiguity: two runs whose values
+/// would collide under naive string concatenation (e.g. repo `"ab"` +
+/// snapshot `"c"` vs repo `"a"` + snapshot `"bc"`) always produce
+/// different signed bytes.
+///
+/// This produces a deterministic byte string so the same run always
+/// results in the same signed payload (assuming the field values are
+/// identical).
 ///
 /// # Errors
 ///
@@ -286,6 +294,29 @@ mod tests {
         )
         .expect("should serialize");
         assert_eq!(msg1, msg2);
+    }
+
+    #[test]
+    fn test_run_signing_message_field_boundary_unambiguous() {
+        // Under a naive concatenation like `repo + snapshot`, these two
+        // field splits produce identical bytes ("reposnap" == "reposnap").
+        // The canonical JSON payload must keep them distinct.
+        let a = run_signing_message(1, "repo", "snap", "pass", 1, 1, "m", "h", 0, 1)
+            .expect("should serialize");
+        let b = run_signing_message(1, "repos", "nap", "pass", 1, 1, "m", "h", 0, 1)
+            .expect("should serialize");
+        assert_ne!(a, b, "repo/snapshot boundary must be unambiguous");
+
+        // Same for the message / manifest_hash boundary.
+        let c = run_signing_message(1, "repo", "snap", "pass", 1, 1, "okhash", "x", 0, 1)
+            .expect("should serialize");
+        let d = run_signing_message(1, "repo", "snap", "pass", 1, 1, "ok", "hashx", 0, 1)
+            .expect("should serialize");
+        assert_ne!(c, d, "message/manifest_hash boundary must be unambiguous");
+
+        // Signatures over the colliding splits must differ too.
+        let signer = Signer::generate();
+        assert_ne!(signer.sign(&a), signer.sign(&b));
     }
 
     #[test]
