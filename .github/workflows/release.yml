@@ -13,12 +13,13 @@ jobs:
     name: Build Release Binaries
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: backbeatin-linux-x86_64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact_name: backbeatin-linux-aarch64
           - os: macos-latest
