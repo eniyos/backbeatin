@@ -2,3 +2,20 @@
 **/*.rs.bk
 .env
 *.key
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor temp/swap files
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+*\#
+
+# Local build artifacts
+*.tar.gz
+proof-bundle.json
