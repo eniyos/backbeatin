@@ -95,7 +95,7 @@ jobs:
         run: |
           cd dist
           sha256sum *.tar.gz > SHA256SUMS
-          echo "$RELEASE_SIGNING_KEY" | base64 -d > release.key.pem
+          printf '%s' "$RELEASE_SIGNING_KEY" | tr -d ' \n\r' | base64 -d > release.key.pem
           chmod 600 release.key.pem
           openssl pkeyutl -sign -rawin \
             -inkey release.key.pem \
