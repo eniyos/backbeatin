@@ -54,15 +54,15 @@ jobs:
       - name: Package binary
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../${{ matrix.artifact_name }}.tar.gz backbeatin
-          cd ../..
+          tar czf "${{ github.workspace }}/${{ matrix.artifact_name }}.tar.gz" \
+            -C "target/${{ matrix.target }}/release" backbeatin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}.tar.gz
+          if-no-files-found: error
 
   sign:
     name: Sign Release Artifacts
