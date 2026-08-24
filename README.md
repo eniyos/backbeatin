@@ -10,12 +10,18 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 
 ### Install
 
-**Option 1: Cargo**
+**Option 1: Homebrew** (macOS / Linux)
+```bash
+brew tap eniyos/backbeatin
+brew install backbeatin
+```
+
+**Option 2: Cargo**
 ```bash
 cargo install backbeatin
 ```
 
-**Option 2: Bun / npm**
+**Option 3: Bun / npm**
 ```bash
 bun install -g backbeatin
 # or: npm install -g backbeatin
@@ -23,10 +29,10 @@ bun install -g backbeatin
 The wrapper downloads the platform binary from the matching GitHub release
 and verifies its SHA-256 against the release's `SHA256SUMS` before install.
 
-**Option 3: Binary Download**
+**Option 4: Binary Download**
 ```bash
 # Download from GitHub releases
-wget https://github.com/eniyos/backbeatin/releases/download/v0.1.0/backbeatin-linux-x86_64.tar.gz
+wget https://github.com/eniyos/backbeatin/releases/download/v0.2.0/backbeatin-linux-x86_64.tar.gz
 tar xzf backbeatin-linux-x86_64.tar.gz
 sudo install backbeatin /usr/local/bin/
 ```

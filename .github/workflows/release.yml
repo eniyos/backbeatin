@@ -179,3 +179,95 @@ jobs:
           else
             npm publish --access public
           fi
+
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download signed bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-dist
+          path: dist
+
+      # Regenerate the tap formula with this release's checksums (parsed from
+      # the signed SHA256SUMS manifest) and push it to eniyos/homebrew-backbeatin.
+      # Requires the TAP_PUSH_TOKEN secret (fine-grained PAT with Contents:
+      # read/write on the tap repo); skipped silently when it is not set.
+      - name: Update tap formula
+        env:
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          if [[ "$VERSION" != v* ]]; then
+            echo "Not a version tag ($VERSION) — skipping tap update."
+            exit 0
+          fi
+          if [ -z "$TAP_PUSH_TOKEN" ]; then
+            echo "TAP_PUSH_TOKEN not set — skipping Homebrew tap update."
+            exit 0
+          fi
+          V="${VERSION#v}"
+          get() { awk -v f="$1" '$2==f {print $1}' dist/SHA256SUMS; }
+          MAC_ARM=$(get backbeatin-macos-aarch64.tar.gz)
+          MAC_X64=$(get backbeatin-macos-x86_64.tar.gz)
+          LIN_ARM=$(get backbeatin-linux-aarch64.tar.gz)
+          LIN_X64=$(get backbeatin-linux-x86_64.tar.gz)
+          for h in "$MAC_ARM" "$MAC_X64" "$LIN_ARM" "$LIN_X64"; do
+            [ -n "$h" ] || { echo "Missing checksum in SHA256SUMS"; exit 1; }
+          done
+
+          BASE="https://github.com/eniyos/backbeatin/releases/download/$VERSION"
+          {
+            echo '# This formula is maintained by the backbeatin release workflow.'
+            echo '# https://github.com/eniyos/backbeatin'
+            echo 'class Backbeatin < Formula'
+            echo '  desc "Prove your Restic/Borg backups are actually restorable"'
+            echo '  homepage "https://github.com/eniyos/backbeatin"'
+            echo "  version \"$V\""
+            echo '  license "MIT"'
+            echo ''
+            echo '  on_macos do'
+            echo '    on_arm do'
+            echo "      url \"$BASE/backbeatin-macos-aarch64.tar.gz\""
+            echo "      sha256 \"$MAC_ARM\""
+            echo '    end'
+            echo '    on_intel do'
+            echo "      url \"$BASE/backbeatin-macos-x86_64.tar.gz\""
+            echo "      sha256 \"$MAC_X64\""
+            echo '    end'
+            echo '  end'
+            echo ''
+            echo '  on_linux do'
+            echo '    on_arm do'
+            echo "      url \"$BASE/backbeatin-linux-aarch64.tar.gz\""
+            echo "      sha256 \"$LIN_ARM\""
+            echo '    end'
+            echo '    on_intel do'
+            echo "      url \"$BASE/backbeatin-linux-x86_64.tar.gz\""
+            echo "      sha256 \"$LIN_X64\""
+            echo '    end'
+            echo '  end'
+            echo ''
+            echo '  def install'
+            echo '    bin.install "backbeatin"'
+            echo '  end'
+            echo ''
+            echo '  test do'
+            echo '    assert_match "backbeatin", shell_output("#{bin}/backbeatin --help")'
+            echo '  end'
+            echo 'end'
+          } > backbeatin.rb
+
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/eniyos/homebrew-backbeatin.git" tap
+          cp backbeatin.rb tap/Formula/backbeatin.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Formula already up to date."
+          else
+            git commit -am "Formula: backbeatin $V"
+            git push
+          fi
