@@ -138,3 +138,44 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm:
+    name: Publish npm Package
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Publish the npm/bun wrapper package (its postinstall downloads the
+      # platform binary from this release and verifies it against SHA256SUMS).
+      # Skips silently on non-tag refs (workflow_dispatch from main) and when
+      # the version is already published.
+      - name: Publish to npm
+        working-directory: npm/backbeatin
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" != v* ]]; then
+            echo "Not a version tag ($GITHUB_REF_NAME) — skipping npm publish."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION
+          node -e '
+            const fs = require("fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            p.version = process.env.VERSION;
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+          '
+          if npm view "backbeatin@$VERSION" version >/dev/null 2>&1; then
+            echo "backbeatin@$VERSION is already published — skipping."
+          else
+            npm publish --access public
+          fi

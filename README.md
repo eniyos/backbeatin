@@ -15,7 +15,15 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 cargo install backbeatin
 ```
 
-**Option 2: Binary Download**
+**Option 2: Bun / npm**
+```bash
+bun install -g backbeatin
+# or: npm install -g backbeatin
+```
+The wrapper downloads the platform binary from the matching GitHub release
+and verifies its SHA-256 against the release's `SHA256SUMS` before install.
+
+**Option 3: Binary Download**
 ```bash
 # Download from GitHub releases
 wget https://github.com/eniyos/backbeatin/releases/download/v0.1.0/backbeatin-linux-x86_64.tar.gz

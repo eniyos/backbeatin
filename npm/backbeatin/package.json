@@ -1,0 +1,41 @@
+{
+  "name": "backbeatin",
+  "version": "0.2.0",
+  "description": "Prove your Restic/Borg backups are actually restorable — sandboxed restores, SHA-256 manifests, Ed25519-signed proofs.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eniyos/backbeatin.git"
+  },
+  "homepage": "https://github.com/eniyos/backbeatin",
+  "keywords": [
+    "backup",
+    "restic",
+    "borg",
+    "restore",
+    "verification",
+    "disaster-recovery"
+  ],
+  "bin": {
+    "backbeatin": "bin/backbeatin.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin",
+    "install.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
