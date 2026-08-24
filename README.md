@@ -12,8 +12,7 @@ It does **not** create backups. It does **not** store your data. It reads an exi
 
 **Option 1: Homebrew** (macOS / Linux)
 ```bash
-brew tap eniyos/backbeatin
-brew install backbeatin
+brew install eniyos/backbeatin/backbeatin
 ```
 
 **Option 2: Cargo**
