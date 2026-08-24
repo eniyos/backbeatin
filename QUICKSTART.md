@@ -40,7 +40,7 @@ Before using Backbeatin, ensure you have:
 
 ### 1. Create Configuration
 
-Create a file called `backbeat.toml`:
+Create a file called `backbeatin.toml`:
 
 ```toml
 [[repo]]
@@ -63,7 +63,7 @@ export AWS_SECRET_ACCESS_KEY="your-secret"
 ### 3. Run Verification
 
 ```bash
-backbeatin verify my-backup -c backbeat.toml
+backbeatin verify my-backup -c backbeatin.toml
 ```
 
 If successful, you'll see:
@@ -90,7 +90,7 @@ AWS_SECRET_ACCESS_KEY = "Your AWS secret key"
 Run the daemon:
 
 ```bash
-backbeatin daemon -c backbeat.toml
+backbeatin daemon -c backbeatin.toml
 ```
 
 ## Troubleshooting

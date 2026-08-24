@@ -35,7 +35,7 @@ pub async fn run_demo(output: &PathBuf) -> anyhow::Result<()> {
     // Host `restic` reaches MinIO via the published port.
     let repo_url = format!("s3:http://127.0.0.1:{port}/backbeat-demo");
     let db_path = tmp.path().join("backbeat.db");
-    let config_path = tmp.path().join("backbeat.toml");
+    let config_path = tmp.path().join("backbeatin.toml");
 
     // Create config. The credential env vars are validated by `Config::load`
     // against the process environment, so they must be exported when running.

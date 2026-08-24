@@ -24,7 +24,7 @@
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Load configuration
-//! let config = Config::load(Path::new("backbeat.toml"))?;
+//! let config = Config::load(Path::new("backbeatin.toml"))?;
 //!
 //! // Open persistence store
 //! let store = Store::open(Path::new("backbeat.db"))?;

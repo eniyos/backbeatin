@@ -362,18 +362,18 @@ cd backbeatin
 <span class="comment"># Build</span>
 cargo build --release
 
-<span class="comment"># Configure (see examples/backbeat.toml)</span>
-cp examples/backbeat.toml backbeat.toml
-<span class="comment"># Edit backbeat.toml with your repo details, then:</span>
+<span class="comment"># Configure (see examples/backbeatin.toml)</span>
+cp examples/backbeatin.toml backbeatin.toml
+<span class="comment"># Edit backbeatin.toml with your repo details, then:</span>
 
 <span class="comment"># Run a single verification</span>
-./target/release/backbeat verify my-repo -c backbeat.toml
+./target/release/backbeatin verify my-repo -c backbeatin.toml
 
 <span class="comment"># Run the daemon (scheduled verification)</span>
-./target/release/backbeat daemon -c backbeat.toml
+./target/release/backbeatin daemon -c backbeatin.toml
 
 <span class="comment"># Generate a demo proof bundle</span>
-./target/release/backbeat demo --output demo-proof-bundle.json</pre>
+./target/release/backbeatin demo --output demo-proof-bundle.json</pre>
 </section>
 
 <!-- FAQ / Design -->

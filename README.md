@@ -29,7 +29,7 @@ signed `SHA256SUMS` manifest before install.
 
 ## Quick Start
 
-**1. Configure** — create `backbeat.toml`:
+**1. Configure** — create `backbeatin.toml`:
 
 ```toml
 [[repo]]
@@ -47,7 +47,7 @@ AWS_SECRET_ACCESS_KEY = "AWS secret access key"
 ```bash
 export AWS_ACCESS_KEY_ID="AKIA…"
 export AWS_SECRET_ACCESS_KEY="…"
-backbeatin verify prod-s3 -c backbeat.toml
+backbeatin verify prod-s3 -c backbeatin.toml
 ```
 
 **3. Automate** — verify on a schedule, alert on failure:
@@ -64,10 +64,10 @@ webhook_url = "https://hooks.slack.com/services/…"
 ```
 
 ```bash
-backbeatin daemon -c backbeat.toml
+backbeatin daemon -c backbeatin.toml
 ```
 
-Full reference: [`examples/backbeat.toml`](examples/backbeat.toml).
+Full reference: [`examples/backbeatin.toml`](examples/backbeatin.toml).
 
 ## Built for production
 

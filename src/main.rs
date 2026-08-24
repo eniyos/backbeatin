@@ -4,7 +4,22 @@ mod commands;
 
 use clap::Parser;
 use cli::{Cli, Commands};
+use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+
+/// The default config filename changed from `backbeat.toml` to
+/// `backbeatin.toml`. When the new default is used but only the legacy
+/// file exists, fall back to it with a deprecation notice.
+fn resolve_config_path(config: PathBuf) -> PathBuf {
+    if config.as_os_str() == "backbeatin.toml" && !config.exists() {
+        let legacy = PathBuf::from("backbeat.toml");
+        if legacy.exists() {
+            tracing::warn!("backbeat.toml is deprecated — rename it to backbeatin.toml");
+            return legacy;
+        }
+    }
+    config
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,9 +39,11 @@ async fn main() -> anyhow::Result<()> {
             db_path,
             sample,
         } => {
+            let config = resolve_config_path(config);
             commands::verify::run_verify(&config, &repo, &db_path, sample.as_deref()).await?;
         }
         Commands::Daemon { config, db_path } => {
+            let config = resolve_config_path(config);
             commands::daemon::run_daemon(&config, &db_path).await?;
         }
         Commands::Demo { output } => {

@@ -1,7 +1,7 @@
 # Backbeatin Sample Configuration
 #
-# Save this as backbeat.toml and run:
-#   backbeatin verify <repo-name> -c backbeat.toml
+# Save this as backbeatin.toml and run:
+#   backbeatin verify <repo-name> -c backbeatin.toml
 
 # ───────────────────────────────────────────────────────────
 # Repositories — repeat [[repo]] blocks for multiple repos

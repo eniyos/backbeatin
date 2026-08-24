@@ -11,7 +11,7 @@ use std::path::PathBuf;
 ///
 /// ## Quick Start
 ///
-/// 1. Create a configuration file (backbeat.toml)
+/// 1. Create a configuration file (backbeatin.toml)
 /// 2. Run verification: backbeatin verify <repo-name>
 /// 3. Start daemon: backbeatin daemon
 ///
@@ -47,7 +47,7 @@ pub enum Commands {
     /// ## Example
     ///
     /// ```bash
-    /// backbeatin verify prod-backup -c backbeat.toml
+    /// backbeatin verify prod-backup -c backbeatin.toml
     /// ```
     ///
     /// ## Exit Codes
@@ -56,14 +56,14 @@ pub enum Commands {
     /// - 1: Verification failed or error occurred
     Verify {
         /// Name of the repository to verify (from config file)
-        #[arg(help = "Repository name as defined in backbeat.toml")]
+        #[arg(help = "Repository name as defined in backbeatin.toml")]
         repo: String,
 
         /// Path to the TOML configuration file
         #[arg(
             short,
             long,
-            default_value = "backbeat.toml",
+            default_value = "backbeatin.toml",
             help = "Path to configuration file"
         )]
         config: PathBuf,
@@ -95,7 +95,7 @@ pub enum Commands {
     /// ## Example
     ///
     /// ```bash
-    /// backbeatin daemon -c backbeat.toml
+    /// backbeatin daemon -c backbeatin.toml
     /// ```
     ///
     /// ## Signals
@@ -106,7 +106,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            default_value = "backbeat.toml",
+            default_value = "backbeatin.toml",
             help = "Path to configuration file"
         )]
         config: PathBuf,

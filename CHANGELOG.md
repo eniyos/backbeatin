@@ -5,6 +5,14 @@ All notable changes to Backbeatin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Default configuration file renamed from `backbeat.toml` to
+  `backbeatin.toml` (`-c` flag and all docs/examples updated). The legacy
+  name still works when the default is used and only `backbeat.toml`
+  exists, with a deprecation warning.
+
 ## [0.2.0] - 2026-08-23
 
 ### Added
