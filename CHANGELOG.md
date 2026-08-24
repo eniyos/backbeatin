@@ -8,10 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Default configuration file renamed from `backbeat.toml` to
-  `backbeatin.toml` (`-c` flag and all docs/examples updated). The legacy
-  name still works when the default is used and only `backbeat.toml`
-  exists, with a deprecation warning.
+- Default file names renamed from `backbeat.toml` / `backbeat.db` to
+  `backbeatin.toml` / `backbeatin.db` (`-c` / `--db-path` flags and all
+  docs/examples updated). The legacy names still work when a default is
+  used and only the legacy file exists, with a deprecation warning.
 
 ## [0.2.0] - 2026-08-23
 

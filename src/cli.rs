@@ -69,7 +69,7 @@ pub enum Commands {
         config: PathBuf,
 
         /// Path to the `SQLite` database for persisting run history
-        #[arg(long, default_value = "backbeat.db", help = "Path to SQLite database")]
+        #[arg(long, default_value = "backbeatin.db", help = "Path to SQLite database")]
         db_path: PathBuf,
 
         /// Restore only a sample instead of the full snapshot.
@@ -112,7 +112,7 @@ pub enum Commands {
         config: PathBuf,
 
         /// Path to the `SQLite` database for persisting run history
-        #[arg(long, default_value = "backbeat.db", help = "Path to SQLite database")]
+        #[arg(long, default_value = "backbeatin.db", help = "Path to SQLite database")]
         db_path: PathBuf,
     },
 

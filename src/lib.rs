@@ -27,7 +27,7 @@
 //! let config = Config::load(Path::new("backbeatin.toml"))?;
 //!
 //! // Open persistence store
-//! let store = Store::open(Path::new("backbeat.db"))?;
+//! let store = Store::open(Path::new("backbeatin.db"))?;
 //!
 //! // Initialize backend
 //! let backend = ResticBackend::from_config(&config.repos[0])?;

@@ -7,18 +7,18 @@ use cli::{Cli, Commands};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-/// The default config filename changed from `backbeat.toml` to
-/// `backbeatin.toml`. When the new default is used but only the legacy
-/// file exists, fall back to it with a deprecation notice.
-fn resolve_config_path(config: PathBuf) -> PathBuf {
-    if config.as_os_str() == "backbeatin.toml" && !config.exists() {
-        let legacy = PathBuf::from("backbeat.toml");
+/// Default filenames changed from `backbeat.*` to `backbeatin.*`. When the
+/// new default is used but only the legacy file exists, fall back to it with
+/// a deprecation notice.
+fn resolve_default_path(path: PathBuf, new_name: &str, legacy_name: &str) -> PathBuf {
+    if path.as_os_str() == new_name && !path.exists() {
+        let legacy = PathBuf::from(legacy_name);
         if legacy.exists() {
-            tracing::warn!("backbeat.toml is deprecated — rename it to backbeatin.toml");
+            tracing::warn!("{legacy_name} is deprecated — rename it to {new_name}");
             return legacy;
         }
     }
-    config
+    path
 }
 
 #[tokio::main]
@@ -39,11 +39,13 @@ async fn main() -> anyhow::Result<()> {
             db_path,
             sample,
         } => {
-            let config = resolve_config_path(config);
+            let config = resolve_default_path(config, "backbeatin.toml", "backbeat.toml");
+            let db_path = resolve_default_path(db_path, "backbeatin.db", "backbeat.db");
             commands::verify::run_verify(&config, &repo, &db_path, sample.as_deref()).await?;
         }
         Commands::Daemon { config, db_path } => {
-            let config = resolve_config_path(config);
+            let config = resolve_default_path(config, "backbeatin.toml", "backbeat.toml");
+            let db_path = resolve_default_path(db_path, "backbeatin.db", "backbeat.db");
             commands::daemon::run_daemon(&config, &db_path).await?;
         }
         Commands::Demo { output } => {
