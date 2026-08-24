@@ -19,3 +19,9 @@ desktop.ini
 # Local build artifacts
 *.tar.gz
 proof-bundle.json
+
+# Local runtime files (config may reference private repos; db holds run history)
+/backbeatin.toml
+/backbeatin.db
+/backbeat.toml
+/backbeat.db
