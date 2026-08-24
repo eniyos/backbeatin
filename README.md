@@ -72,8 +72,8 @@ Full reference: [`examples/backbeatin.toml`](examples/backbeatin.toml).
 ## Built for production
 
 **Drift detection** — every run is compared against the previous successful
-run of the same snapshot. Same-size corruption (bit flips, silent
-overwrites) that checksum-by-count alone would miss gets flagged.
+run of the same snapshot, flagging same-size corruption (bit flips, silent
+overwrites) that count-and-size checks would miss.
 
 **Sampling** — multi-TB repos don't need a full restore every day:
 
@@ -99,7 +99,7 @@ snapshot_tag = "daily"
 
 **Signed proofs** — every run is signed (Ed25519 over a canonical JSON
 payload) and persisted to local SQLite, building a tamper-evident audit
-chain you can hand to compliance.
+chain.
 
 **CI-friendly exit codes**
 
@@ -111,9 +111,9 @@ chain you can hand to compliance.
 ## How It Works
 
 1. **Read-only access** — snapshot discovery via the backend CLI; the repo is never written to
-2. **Sandboxed restore** — a real restore into an ephemeral Docker container (`--rm`), all capabilities dropped, CPU / memory / PID limits enforced, free-space budget checked before restore starts
+2. **Sandboxed restore** — into an ephemeral Docker container (`--rm`), capabilities dropped, resource limits enforced, free-space budget checked first
 3. **Manifest** — every restored file hashed with SHA-256
-4. **Verification** — file count, byte count and hash tree checked against backend stats; drift-checked against the previous successful run of the same snapshot & scope
+4. **Verification** — file count, byte count and hash tree checked against backend stats
 5. **Proof** — the run is persisted to SQLite, signed with Ed25519, and failure webhooks fire
 
 ## Security Model
